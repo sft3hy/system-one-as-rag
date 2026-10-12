@@ -238,9 +238,68 @@ Three things the calibration changed about the design:
    endpoint, so the concurrency knobs on both endpoints are load-shedding
    controls, not capacity.
 
-Full run plan against these numbers: flash + judge cascade is an evening-free
-**~21 min**; a complete three-arm leaderboard including train is **~2.7 h**.
-Nothing here needs a batch bigger than the current one.
+Full run plan against these numbers: flash alone is **~12 min**; a complete
+three-arm leaderboard including train is **~2.7 h**. The cascade projection of
+~21 min held shape but not semantics — see §11 for what the first live cascade
+actually did. Nothing here needs a batch bigger than the current one.
+
+## 11. The first live cascade broke exactly where predicted — and the fix is per-tier thresholds
+
+`configs/cascade.yaml`, 150 groups/arm, all four arms, 26 min wall. The
+CascadeStrategy ran correctly as plumbing — 23% escalation rate, exactly the
+projected band population — but the gate it feeds was wrong by construction:
+
+| shape | val cov @ 5% | val fpr | test AUROC | cost/cond |
+|---|---|---|---|---|
+| flash (thr 0.89) | 0.163 | 0.047 | 0.828 | 0.265 s |
+| 27B (thr 0.94) | 0.223 | 0.047 | 0.879 | 0.835 s |
+| **cascade, one shared threshold (0.96)** | **0.030** | 0.000 | 0.763 | 0.436 s |
+| **cascade, per-tier (flash ≥ 0.89 / judge ≥ 0.96)** | **0.193** | 0.047 | — (cov 0.180 on test, fpr 0.047) | 0.436 s |
+
+Three measured facts explain everything:
+
+1. **The judge's probabilities are a spike, not a scale.** On 300 val cases it
+   answered 0.95 (97×), 1.00 (88×), 0.10 (54×), 0.00 (43×) — ~90% of outputs on
+   four exact values. It never says 0.96.
+2. **It is confidently wrong inside the band, at exactly 0.95.** Of 36 band
+   negatives it scores **17 at exactly 0.95**. A shared threshold of 0.95 keeps
+   all 17 (fpr 0.11); the tuner must therefore sit above 0.95, and since the
+   judge's *correct* band answers also cluster at 0.95, coverage starves to 3%.
+   This is the mixed-distribution caveat made concrete: *the mixture has no
+   honest single operating point because the components' supports barely
+   overlap.*
+3. **Per-tier acceptance transfers — but on a cliff edge.** Accept iff
+   decisive-flash ≥ 0.89 OR escalated-judge ≥ 0.96 (which, given the judge's
+   spikes, means *"the judge must say exactly 1.0"*): val cov 0.193 / fpr 0.047,
+   and with *no refitting* test cov 0.180 / fpr 0.047. That is +18% coverage
+   over flash alone at **half the wall-clock of 27B**. But the margin is fake:
+   dropping the judge bar one cent (0.95) re-admits all 17 wrong cases, and on
+   test the judge puts 2 band negatives at 1.0 that no threshold on its own
+   score can exclude. A threshold whose safety is the gap between {0.95, 1.0}
+   does not survive a model re-roll.
+
+The band itself is thin: judge AUROC inside the band is 0.729 vs flash's 0.700
+(n=69). Escalation is buying a *0.03* AUROC improvement — which is what the
+no-think judge is worth on cases flash found ambiguous. The thinking judge
+sharpened negatives properly (mean p⁻ 0.074 vs 0.358, §8), so the two
+candidate upgrades are:
+
+- **(a) calibrate escalation, not just routing**: map escalated judge scores onto
+  flash's val scale (quantile match) before the threshold sees them; a single
+  threshold then behaves per-tier, and `t_j = 0.99` stops being load-bearing on
+  the judge's exact saturation values.
+- **(b) pay for thinking on escalated cases only** (`max_tokens: 1024`,
+  thinking on): sharper band decisions at ~1.9 s × 23% ≈ +0.44 s/cond — the
+  full-set judge budget doubles, but only on the band.
+
+Until (a) or (b) lands, **27B is the recommended single-arm gate**: the only
+arm that wins ranking *and* calibration together. The cascade is affordable and
+correctly routed, but its judge adds little at no-think.
+
+Timing model validated: cascade cost/cond measured on the test split at 0.29 s
+(85.8 s / 300) ≈ flash + 23% × judge = 0.436 s modeled, with the model's val
+split inflated by first-after-contention warmup exactly as §10 describes
+(189 s val vs 86 s test for the same work).
 
 ## Open questions for the next pass
 
