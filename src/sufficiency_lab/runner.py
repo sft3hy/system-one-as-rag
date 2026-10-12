@@ -675,7 +675,20 @@ def main(argv: list[str] | None = None) -> int:
         cfg = replace(cfg, limit=args.limit)
     if args.kinds:
         kinds = {k.strip() for k in args.kinds.split(",") if k.strip()}
-        cfg = replace(cfg, models=tuple(m for m in cfg.models if m.kind in kinds))
+        kept = [m for m in cfg.models if m.kind in kinds]
+        # A cascade needs its tiers to exist. Keep referenced arms even when
+        # their kind was filtered out, and put them first so the two-pass
+        # construction in run() finds them in the registry.
+        refs = {n for m in kept if m.kind == "cascade"
+                for n in (m.extra.get("fast"), m.extra.get("slow")) if n}
+        by_name = {m.name: m for m in cfg.models}
+        kept_names = {m.name for m in kept}
+        kept = [by_name[n] for n in refs if n in by_name and n not in kept_names] + kept
+        missing = refs - set(by_name)
+        if missing:
+            print(f"--kinds kept a cascade whose tiers are not configured: {sorted(missing)}")
+            return 2
+        cfg = replace(cfg, models=tuple(kept))
         if not cfg.models:
             print(f"no arms left after --kinds {args.kinds}")
             return 2

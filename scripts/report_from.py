@@ -128,7 +128,17 @@ def main() -> int:
 
         rows = list(rep.values())
         toks = [r.get("input_tokens") or 0 for r in rows]
-        kind = "heuristic" if not any(toks) else "system1"
+        otoks = [r.get("output_tokens") or 0 for r in rows]
+        # An arm that emits tokens is autoregressive: a decision model always
+        # reports output_tokens == 0, so mislabelling the judge as "system1"
+        # here would put a decode-bound arm in the single-prefill column of
+        # the leaderboard and make the latency comparison meaningless.
+        if not any(toks):
+            kind = "heuristic"
+        elif any(otoks):
+            kind = "llm_judge"
+        else:
+            kind = "system1"
 
         leaderboard.append({
             "strategy": strategy, "kind": kind, "quantization": None,
