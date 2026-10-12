@@ -1,0 +1,59 @@
+# Smoke run: real SufficiencyBench, one decision model, no autoregressive arm.
+# Goal is to prove the runner end to end on real data and get the first honest
+# AUROC before spending time loading a second 27B model into the GPU.
+
+run:
+  id: smoke-clef-flash
+  dataset: sufficiencybench
+  data_path: ./data/raw
+  out_dir: ./results
+  splits: [val, test]
+  limit: 120                 # whole question groups, so pairs never split
+
+omlx:
+  base_url: http://127.0.0.1:8000/v1
+  settings_path: ~/.omlx/settings.json
+  timeout_s: 300
+  retries: 2
+  max_concurrency: 8
+  truncate: true
+
+risk:
+  max_false_sufficient: 0.05
+  bootstrap: 400
+  seed: 13
+
+latency:
+  warmup: 3
+  repeats: 1
+  concurrency: [1, 4, 8]
+  fast_budget_ms: 150
+  judge_budget_ms: 1200
+  escalate_low: 0.35
+  escalate_high: 0.75
+  t_conflict: 0.50
+
+models:
+  - name: clef-flash-choice-3q
+    kind: system1
+    model: clef-flash-oQ4e
+    batch_questions: true
+    quantization: oQ4e
+    extra: {diagnostic: true}
+
+  - name: clef-flash-choice-1q
+    kind: system1
+    model: clef-flash-oQ4e
+    batch_questions: false
+    quantization: oQ4e
+    extra: {diagnostic: false}
+
+  - name: lexical
+    kind: heuristic
+    model: lexical
+  - name: question_only
+    kind: heuristic
+    model: question_only
+  - name: context_length
+    kind: heuristic
+    model: length

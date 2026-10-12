@@ -1,0 +1,19 @@
+# datasets (public, fetched by scripts; large)
+/data/raw/
+/data/fixtures/
+
+# experiment output
+/results/
+
+# uv / python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+
+# local secrets — the omlx API key is read from ~/.omlx/settings.json, never here
+.env
+*.key
+
+.DS_Store

@@ -1,0 +1,79 @@
+# Sufficiency gate benchmark — Clef on omlx vs baselines.
+#
+# Prerequisites (verified on this box, M5 Ultra / 256 GB):
+#   1. omlx >= 0.7.1.dev1 serving decision models (jundot/omlx#4315).
+#   2. Decision checkpoints in ~/models, e.g.
+#        hf download Jundot/clef-flash-oQ4e  --local-dir ~/models/Jundot/clef-flash-oQ4e
+#        hf download Jundot/clef-oQ4e        --local-dir ~/models/Jundot/clef-oQ4e
+#   3. SufficiencyBench at data/raw/sufficiencybench/{train,val,test}/data.json
+#        git clone --depth 1 https://github.com/inab-lab/SufficiencyBench /tmp/sb
+#        cp -r /tmp/sb/datasets_for_github/sufficiencybench data/raw/
+#   4. OMLX_API_KEY exported, or leave settings_path as-is to read ~/.omlx.
+
+run:
+  id: clef-vs-baselines-v1
+  dataset: sufficiencybench
+  data_path: ./data/raw
+  out_dir: ./results
+  splits: [val, test]     # thresholds tune on val, report on test
+  limit: null
+
+omlx:
+  base_url: http://127.0.0.1:8000/v1
+  settings_path: ~/.omlx/settings.json   # API key read from here, never stored here
+  timeout_s: 300
+  retries: 2
+  max_concurrency: 8                     # matches server max_concurrent_requests
+  truncate: true                         # Clef cuts state to 16384 tokens; false -> 413
+
+risk:
+  max_false_sufficient: 0.05           # the cap you chose
+  bootstrap: 2000
+  seed: 13
+
+latency:
+  warmup: 3
+  repeats: 1
+  concurrency: [1, 4, 8]
+  fast_budget_ms: 80                   # decision tier; judge never runs past this
+  judge_budget_ms: 1200              # per-request ceiling for the AR judge
+  escalate_low: 0.35                 # p < low -> block outright
+  escalate_high: 0.75                # p >= high -> answer outright
+  t_conflict: 0.50                   # UNCALIBRATED: SufficiencyBench has no
+                                     # gold contradiction labels (see README)
+
+models:
+  # Track A — System 1 decision models (one prefill, three typed questions)
+  - name: clef-flash-oQ4e
+    kind: system1
+    model: clef-flash-oQ4e
+    batch_questions: true
+    quantization: oQ4e               # joint head stays bf16 (oQ keeps it out of
+                                     # the quantized backbone) — recorded as a column
+    extra: {diagnostic: true, revision: main}
+
+  - name: clef-oQ4e
+    kind: system1
+    model: clef-oQ4e
+    batch_questions: true
+    quantization: oQ4e
+    extra: {diagnostic: true}
+
+  # Track C — autoregressive judge, same rubric, pays for decode
+  - name: qwen38-flash-judge
+    kind: llm_judge
+    model: Qwen3.8-Flash-Next-oQ4e-mtp
+    gate: slow
+    max_tokens: 96
+
+  # Track B — cheap floors. If a decision model cannot beat these, it is
+  # not adding semantics; length near-chance is the confound check.
+  - name: lexical
+    kind: heuristic
+    model: lexical
+  - name: question_only
+    kind: heuristic
+    model: question_only
+  - name: context_length
+    kind: heuristic
+    model: length

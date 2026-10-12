@@ -1,0 +1,52 @@
+0.7.1.dev1
+0.7.1.dev1 Latest
+@jundot jundot released this 3 days ago
+ v0.7.1.dev1
+ c0b1056 
+oMLX 0.7.1.dev1
+This is a development release. Please report any bugs through GitHub Issues. If you need a stable release, please use oMLX 0.7.0.
+
+oMLX 0.7.1.dev1 adds decision models, prefills concurrent prompts together, speeds up Qwen3.8, Qwen3.6, GLM-5.3-Flash and DeepSeek V4.1, and refreshes the web UI.
+
+Download: macOS 26 / 27 | macOS 15 Sequoia
+
+Decision Models: Clef and OpenJev
+oMLX now serves decision models through POST /v1/systemone, which follows the TypeSafe System One API. They read a state once and return a probability for each option of typed questions (noul, choice, score) instead of generating text. Clef and Clef-Flash (27B, 9B, text and images) and OpenJev (27B, text and one image) are detected automatically, or you can set the model type to decision. oQ keeps Clef's joint head intact, and ready-made Jundot/clef-oQ4e and Jundot/clef-flash-oQ4e checkpoints are available. #4315
+
+ decision1.mp4 
+Batched Prefill for Concurrent Requests
+When several requests prefill at the same time, their chunks now run in one forward, so MoE expert weights are read once instead of once per request. There is no new setting, and each request keeps its own cache. It covers Qwen3.5/3.6/3.8, Qwen3.8-Flash-Next, GLM-5.3 and Hy3. #4361, built on #3888 by @chenqianhe.
+
+Mean time to first token, before -> after:
+
+Model	Hardware	8 prompts at once	8 prompts 0.4 s apart	4 prompts joining 4 decoding streams
+Qwen3.8-Flash-Next oQ4e	M5 Max	2.08 -> 1.81 s (-13%)	7.41 -> 5.75 s (-22%)	1.65 -> 1.31 s (-21%)
+GLM-5.3-Flash oQ4e (first 20 layers)	M5 Max	1.92 -> 1.68 s (-12%)	6.83 -> 5.15 s (-25%)	1.09 -> 1.00 s (-8%)
+Qwen3.8-Flash-Next oQ4e	M3 Ultra	3.18 -> 2.68 s (-16%)	15.12 -> 12.79 s (-15%)	2.32 -> 1.97 s (-15%)
+Qwen3.8-27B oQ4e	M3 Ultra	8.77 -> 7.80 s (-11%)	36.66 -> 32.52 s (-11%)	6.11 -> 5.10 s (-17%)
+Faster Qwen3.8, Qwen3.6, GLM-5.3-Flash and DeepSeek V4.1
+Model	Change	Hardware
+Qwen3.8-Flash-Next, group size 32 checkpoints	Decode 39 -> 91 tok/s (+133%) with MTP off, 98 -> 134 tok/s (+37%) with MTP on	M3 Ultra
+Qwen3.8-Flash-Next	Decode with 4 streams at 12-24K context +12%, single request +4-5%	M5 Max, M3 Ultra
+Qwen3.8-Flash-Next with expert offload	32K prefill 396 -> 636 tok/s (+61%)	M3 Ultra
+Qwen3.6-35B-A3B	Decode 156 -> 205 tok/s (+31%)	M5 Max
+Qwen3.8-27B oQ8e with INT8 activation prefill	Prefill +25% at 4K, +38% at 16K	M5 Max
+GLM-5.3-Flash	Decode on M3 and M4 31.3 -> 40.6 tok/s (+30%), DFlash2 +8-9%	M3 Ultra
+DeepSeek V4.1 Flash	First run 13.2 -> 19.6 tok/s (+48%), decode 20.0 -> 21.0 tok/s (+5%), DSpark rewrites 40.4 -> 45.9 tok/s (+14%)	M3 Ultra
+Lightning MTP on Qwen, Gemma 4, GLM-5.3 and MiMo	File edits 1.5-2x faster at temperature 1.0	M3 Ultra
+Each figure is measured against the code right before the change. By @jerryfane (#4052, #4055, #4062, #4104, #4105, #4106, #4112, #4245, #4248), @AureliusClaw (#4070), @hojin12312 (#4320, #4350, #4387), @samfenwick (#4113, ported in #4335), @yeeeeff (00decff), @junmo-kim (#4255, #4324), @N1k1tung (#4338, #4342) and @ngutech21 (#4336), plus #4240 and #4313. The DeepSeek V4.1 changes (#4354, #4360, #4363, #4365) are adapted from the m5-ultra work by @tacos8me.
+
+A Refreshed Web UI
+The dashboard is rebuilt around the redesign @LXD-8 proposed in #3849 and #3850: a log table with level badges and a detail panel, a settings section rail with copy links, pinned sub-tabs, a status header with Restart and Unload all, grouped benchmark presets, and a Serving Stats block you can customize (#4399). #4364, with follow-ups by @LXD-8 in #4392 and #4394.
+
+New Features and Improvements
+Memory guard: frees old hot cache before rejecting a prompt, avoids full KV copies when a long request joins a batch, and balanced now counts a quarter of other apps' memory as reclaimable (#4252, #4312 with @luken, #4372).
+Video input for Qwen3.5/3.6/3.8, with per-clip prefix caching and cached vision features for follow-up turns. By @Marian2110 and @mdc2122 (#4169).
+oQe refit: a weighted least-squares refit of group scales and biases cuts KL to the original model by 11-15%. Only new conversions change (#4385).
+Prefill progress: return_progress: true streams llama.cpp-style prompt_progress chunks (#4362, from the idea by @alytaphoenix in #2980).
+vLLM-compatible /tokenize and /detokenize (#4331).
+Headless mode: omlx serve --headless runs without the web UI, and the admin API accepts the main API key as a Bearer token (#4359).
+Embeddings and rerank: EmbeddingGemma 2 with image and audio input (#4333, @Bannng in #4390), a rerank instruction (@Jason-Barbour in #4389), rerank max_length (#4168), and native BERT/XLM-R outputs that match transformers (#4170).
+Cluster: forget offline Macs, pairing guidance and the SSD cache on by default (@lybertybox443 in #4097, #4143, #4145, #4146). Qwen3.5 dense models run pipeline parallel, hybrid models are charged KV only for full-attention layers, and dead ranks are recovered (@masterfasa in #4147, #4148, #4208).
+Hardening: update signature checks, a request body size cap and the inline audio limit (@billythegod in #4164, #4188, #4190).
+Other: faster unload settle (@yanzhaohui1999 in #4162), DFlash draft name resolution and warnings (@yanzhaohui1999 in #3310, #4299; @e-Garcia in #4123), mlx-vlm 0.7.7, mlx-audio 0.5.7, xgrammar 0.2.8, and the MLX version in Engine Versions (#1611).

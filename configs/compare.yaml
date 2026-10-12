@@ -1,0 +1,68 @@
+# Capacity comparison: Clef-Flash (9B) vs Clef (27B), same contract, same cases.
+# The question this answers: does 3× the parameters buy better sufficiency
+# discrimination, and what does it cost in latency and memory?
+#
+# Both arms share configs/contract.py's rubric and the same case order, so the
+# only variables are the checkpoint and its size.
+
+run:
+  id: clef-flash-vs-clef
+  dataset: sufficiencybench
+  data_path: ./data/raw
+  out_dir: ./results
+  splits: [val, test]
+  limit: 150
+
+omlx:
+  base_url: http://127.0.0.1:8000/v1
+  settings_path: ~/.omlx/settings.json
+  timeout_s: 600
+  retries: 2
+  max_concurrency: 8
+  truncate: true          # both Clef models cut state to 16384 tokens
+
+risk:
+  max_false_sufficient: 0.05
+  bootstrap: 2000
+  seed: 13
+
+latency:
+  warmup: 3
+  repeats: 1
+  concurrency: [1, 4, 8]
+  fast_budget_ms: 150     # measured: Flash p50=165ms, 27B p50=535ms — see FINDINGS
+  judge_budget_ms: 1200
+  escalate_low: 0.35
+  escalate_high: 0.75
+  t_conflict: 0.50
+
+models:
+  - name: clef-flash-oQ4e
+    kind: system1
+    model: clef-flash-oQ4e
+    batch_questions: true
+    quantization: oQ4e
+    extra: {diagnostic: true}
+
+  - name: clef-27b-oQ4e
+    kind: system1
+    model: clef-oQ4e
+    batch_questions: true
+    quantization: oQ4e
+    extra: {diagnostic: true}
+
+  # 1-question floor for each: isolates the per-question scoring cost from
+  # the model-size cost.
+  - name: clef-flash-oQ4e-1q
+    kind: system1
+    model: clef-flash-oQ4e
+    batch_questions: false
+    quantization: oQ4e
+    extra: {diagnostic: false}
+
+  - name: clef-27b-oQ4e-1q
+    kind: system1
+    model: clef-oQ4e
+    batch_questions: false
+    quantization: oQ4e
+    extra: {diagnostic: false}
