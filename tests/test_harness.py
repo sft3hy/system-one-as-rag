@@ -132,6 +132,34 @@ def test_nan_scores_are_dropped_not_zeroed():
     assert np.isnan(d["auroc"])
 
 
+def test_select_threshold_survives_partial_nan_scores():
+    """Regression: filtering scores and then re-filtering them against the
+    unfiltered mask truncated the sample and raised IndexError once some of an
+    arm's cases errored. Cases and scores must be dropped together, once."""
+    n = 200
+    cases = [make_case(i, i % 2 == 0) for i in range(n)]
+    scores = [0.95 if c.sufficient else 0.20 + 0.25 * (i % 3 == 0)
+              for i, c in enumerate(cases)]
+    # 18 hard failures, scattered — exactly what a judge that errors on some
+    # cases produces
+    for i in range(0, n, 11):
+        scores[i] = float("nan")
+
+    th = select_threshold(cases, scores, strategy="judge", max_risk=0.05)
+    assert not th.fallback
+    kept = sum(1 for s in scores if s == s)
+    assert th.n_val == kept
+    assert th.risk_fpr <= 0.05
+    op = operating_point(cases, scores, th.threshold)
+    assert op.risk_fpr <= 0.05
+
+
+def test_metrics_reject_mismatched_lengths():
+    cases = [make_case(i, True) for i in range(5)]
+    with pytest.raises(ValueError, match="length mismatch"):
+        operating_point(cases, [0.5] * 4, 0.5)
+
+
 def test_ece_is_zero_for_perfect_calibration():
     rng = np.random.default_rng(0)
     p = rng.uniform(0, 1, 4000)

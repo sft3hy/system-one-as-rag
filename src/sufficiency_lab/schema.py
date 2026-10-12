@@ -120,6 +120,9 @@ class Decision:
     error: str | None = None
     contract_version: str | None = None
     questions_in_request: int | None = None
+    # strategy-specific timing/diagnostic detail (decode_ms, gen_tps,
+    # reasoning_chars, truncated, salvaged, requests, ...)
+    meta: dict[str, Any] = field(default_factory=dict)
 
     def to_json_dict(self) -> dict[str, Any]:
         return asdict(self)

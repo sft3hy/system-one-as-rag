@@ -42,18 +42,25 @@ def select_threshold(
     min_negatives: int = MIN_NEGATIVES,
 ) -> Threshold:
     grid = tuple(grid) if grid else tuple(round(0.01 * i, 2) for i in range(1, 100))
-    y = np.array([1 if c.sufficient else 0 for c in cases], dtype=int)
-    p = np.asarray(scores, dtype=float)
-    ok = ~np.isnan(p)
-    y, p = y[ok], p[ok]
+    if len(cases) != len(scores):
+        raise ValueError(
+            f"cases/scores length mismatch ({len(cases)} vs {len(scores)}): a "
+            "threshold must come from the same decisions it will gate."
+        )
+    ok = ~np.isnan(np.asarray(scores, dtype=float))
+    # Filter cases and scores together, exactly once. Filtering p first and
+    # then zipping the filtered p against the unfiltered mask silently
+    # truncated the sample (and raised once the counts diverged).
+    kept = [c for c, k in zip(cases, ok) if k]
+    p = np.asarray([s for s, k in zip(scores, ok) if k], dtype=float)
+    y = np.array([1 if c.sufficient else 0 for c in kept], dtype=int)
     n_neg = int((y == 0).sum())
     if n_neg < min_negatives:
         # too few negatives to certify the risk budget: default conservative
         return Threshold(strategy, 0.90, float("nan"), float("nan"),
                          int(len(y)), n_neg, achieved_on="val", fallback=True)
 
-    pts = [operating_point([c for c, k in zip(cases, ok) if k],
-                           [s for s, k in zip(p, ok) if k], t) for t in grid]
+    pts = [operating_point(kept, p, t) for t in grid]
     eligible = [pt for pt in pts if pt.risk_fpr <= max_risk and pt.coverage > 0]
     if not eligible:
         safest = min(pts, key=lambda q: (q.risk_fpr, -q.coverage))

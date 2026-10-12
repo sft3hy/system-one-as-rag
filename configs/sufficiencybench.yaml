@@ -64,7 +64,8 @@ models:
     kind: llm_judge
     model: Qwen3.8-Flash-Next-oQ4e-mtp
     gate: slow
-    max_tokens: 96
+    max_tokens: 256
+    extra: {thinking: false}   # measured default; see scripts/ab_judge.py
 
   # Track B — cheap floors. If a decision model cannot beat these, it is
   # not adding semantics; length near-chance is the confound check.

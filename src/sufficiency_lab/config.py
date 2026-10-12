@@ -182,7 +182,9 @@ def load_config(path: str | Path) -> RunConfig:
             batch_questions=bool(m.get("batch_questions", True)),
             max_tokens=int(m.get("max_tokens", 64)),
             gate=m.get("gate", "fast"),
-            extra={k: v for k, v in m.items() if k in {"quantization", "notes", "revision"}},
+            extra={k: v for k, v in m.items()
+                   if k in {"quantization", "notes", "revision", "thinking",
+                           "temperature", "diagnostic"}},
         )
         for m in raw.get("models", [])
     )

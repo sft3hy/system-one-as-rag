@@ -1,0 +1,66 @@
+# Timing calibration: 100 question groups (200 conditions) per split, EVERY arm
+# including the autoregressive judge. Its purpose is not accuracy — it is to
+# measure real per-arm cost so a full-set run can be scheduled from data.
+#
+# All three models stay resident (27B + Flash + chat judge). Do not run this
+# if you need clean per-model RSS; see FINDINGS §7.
+
+run:
+  id: timing-100
+  dataset: sufficiencybench
+  data_path: ./data/raw
+  out_dir: ./results
+  splits: [val, test]
+  limit: 100
+
+omlx:
+  base_url: http://127.0.0.1:8000/v1
+  settings_path: ~/.omlx/settings.json
+  timeout_s: 600
+  retries: 2
+  max_concurrency: 8
+  truncate: true
+
+risk:
+  max_false_sufficient: 0.05
+  bootstrap: 400
+  seed: 13
+
+latency:
+  warmup: 3
+  repeats: 1
+  concurrency: [1, 4, 8]
+  fast_budget_ms: 150
+  judge_budget_ms: 1200
+  escalate_low: 0.35
+  escalate_high: 0.75
+  t_conflict: 0.50
+
+models:
+  - name: clef-flash
+    kind: system1
+    model: clef-flash-oQ4e
+    batch_questions: true
+    quantization: oQ4e
+    extra: {diagnostic: true}
+
+  - name: clef-27b
+    kind: system1
+    model: clef-oQ4e
+    batch_questions: true
+    quantization: oQ4e
+    extra: {diagnostic: true}
+
+  # Autoregressive judge: decode-bound, so its cost scales with output tokens,
+  # not state length. Same rubric as the decision arms (contract.py).
+  - name: qwen38-judge
+    kind: llm_judge
+    model: Qwen3.8-Flash-Next-oQ4e-mtp
+    gate: slow
+    max_tokens: 256
+    extra: {thinking: false}   # measured: thinking fails 21% of cases at 512 tok
+                                # and costs 3.4x latency; no-think+schema fails 0%
+
+  - name: lexical
+    kind: heuristic
+    model: lexical

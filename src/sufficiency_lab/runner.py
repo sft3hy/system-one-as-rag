@@ -100,7 +100,9 @@ def build_strategy(spec, cfg: RunConfig, client: OmlxClient | None) -> BaseStrat
         )
     if spec.kind == "llm_judge":
         return LLMJudgeStrategy(
-            cfg.omlx, spec.model, q, name=spec.name, max_tokens=spec.max_tokens
+            cfg.omlx, spec.model, q, name=spec.name, max_tokens=spec.max_tokens,
+            enable_thinking=bool(spec.extra.get("thinking", False)),
+            temperature=float(spec.extra.get("temperature", 0.0)),
         )
     raise ValueError(f"unknown kind {spec.kind!r} for arm {spec.name!r}")
 
@@ -325,10 +327,13 @@ def run(cfg: RunConfig, *, live: bool = True, cold: bool = False,
             # fell back to 0.50 and printed a FPR of 0.42 next to a real 0.03.
             split_scores: dict[str, list[float]] = {}
             split_dec: dict[str, list[Decision]] = {}
+            split_wall: dict[str, float] = {}
             for split in cfg.splits:
                 cases = splits[split]
                 is_report = split == report_split
+                t_split = time.perf_counter()
                 dec, arm_stats = run_arm(strategy, cases, cfg, monitor=is_report)
+                split_wall[split] = time.perf_counter() - t_split
                 split_scores[split] = [d.p_sufficient for d in dec]
                 split_dec[split] = dec
                 write_jsonl(run_dir / "predictions" / f"{spec.name}_{split}.jsonl",
@@ -336,6 +341,7 @@ def run(cfg: RunConfig, *, live: bool = True, cold: bool = False,
                 if is_report:
                     stats = arm_stats
                     dec_report = dec
+            stats["wall_serial_s"] = split_wall
 
             scores = split_scores[report_split]
             test_cases = splits[report_split]
@@ -408,6 +414,23 @@ def run(cfg: RunConfig, *, live: bool = True, cold: bool = False,
             stats["latency_concurrent"] = conc
             (run_dir / "latency" / f"{spec.name}.json").write_text(
                 json.dumps({"serial": stats["latency_serial"], **conc}, indent=2))
+
+            # wall-clock per split, persisted so full-run estimates are derived
+            # from real elapsed time rather than summed request latency.
+            stats_path = run_dir / "stats.json"
+            all_stats = (json.loads(stats_path.read_text())
+                         if stats_path.exists() else {})
+            all_stats[spec.name] = {
+                "wall_serial_s": stats.get("wall_serial_s"),
+                "tokens_per_case": stats.get("tokens_per_case"),
+                "input_tokens": stats.get("input_tokens"),
+                "output_tokens": stats.get("output_tokens"),
+                "errors": stats.get("errors"),
+                "batch_vs_split": stats.get("batch_vs_split"),
+                "cold": stats.get("cold"),
+                "conflict_signal": stats.get("conflict_signal"),
+            }
+            stats_path.write_text(json.dumps(all_stats, indent=2))
 
             if stats.get("resources"):
                 (run_dir / "resources" / f"{spec.name}.json").write_text(

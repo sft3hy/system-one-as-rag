@@ -33,6 +33,12 @@ class GatePoint:
 
 
 def _clean(cases: Sequence[Case], scores: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    if len(cases) != len(scores):
+        raise ValueError(
+            f"cases/scores length mismatch ({len(cases)} vs {len(scores)}): every "
+            "score must correspond to a case in order. Filter mask-failures once, "
+            "against both arrays together."
+        )
     y = np.array([1 if c.sufficient else 0 for c in cases], dtype=int)
     p = np.asarray(scores, dtype=float)
     keep = ~np.isnan(p)
@@ -140,6 +146,15 @@ def grouped_bootstrap_ci(
     pa = np.asarray(scores_a, dtype=float)
     pb = None if scores_b is None else np.asarray(scores_b, dtype=float)
     groups = np.array([c.group for c in cases], dtype=object)
+
+    # Drop non-finite scores BEFORE resampling: a failed arm emits NaN, and
+    # sklearn raises on it deep inside a bootstrap replicate, which is a
+    # confusing place to discover that a strategy errored on some cases.
+    ok = ~np.isnan(pa) if pb is None else (~np.isnan(pa) & ~np.isnan(pb))
+    y_all, pa, groups = y_all[ok], pa[ok], groups[ok]
+    if pb is not None:
+        pb = pb[ok]
+
     uniq, inv = np.unique(groups, return_inverse=True)
 
     rng = np.random.default_rng(seed)

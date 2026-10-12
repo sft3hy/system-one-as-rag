@@ -41,6 +41,9 @@ class BaseStrategy:
         try:
             p_suf, p_conf, probs, meta = self._score(case)
             latency = (perf_counter() - start) * 1000.0
+            extra = {k: v for k, v in meta.items()
+                    if k not in {"label", "ttft_ms", "input_tokens",
+                                 "output_tokens", "attempts"}}
             return Decision(
                 case_id=case.id,
                 strategy=self.name,
@@ -54,6 +57,7 @@ class BaseStrategy:
                 output_tokens=meta.get("output_tokens"),
                 attempts=meta.get("attempts", 1),
                 contract_version=self.questions.version,
+                meta=extra,
             )
         except Exception as exc:  # a broken arm must not sink the run
             self._errors += 1
