@@ -174,6 +174,58 @@ the only shape that makes an AR judge affordable at full scale (`estimate_full_r
 - `truncate: true` is Clef's default (16384-token state); `false` makes an oversized
   prompt a 413, which the adapter records rather than dropping.
 
+## 10. Full-set timing calibration — the run you schedule by
+
+100 question groups per arm (200 conditions), all four arms, three models
+resident, `configs/timing.yaml`. Whole run: **18.4 min**. Zero failed cases
+across all arms — the judge fix holds under the full split, not just the probe.
+
+| arm | kind | val thr | fpr | cov | test AUROC | ECE | p50 | p95 | s/cond |
+|---|---|---|---|---|---|---|---|---|---|
+| clef-flash | system1 | 0.89 | 0.030 | 0.145 | 0.836 | 0.123 | 261 ms | 319 ms | 0.265 |
+| clef-27b | system1 | 0.93 | 0.050 | 0.265 | 0.872 | 0.101 | 866 ms | 1091 ms | 0.835 |
+| qwen38-judge | llm_judge | 0.96 | 0.040 | 0.295 | 0.827 | 0.222 | 489 ms | 829 ms | 0.743 |
+| lexical | heuristic | 0.84 | 0.050 | 0.160 | 0.655 | 0.158 | ~0 | ~0 | ~0 |
+
+Projections to the report set (val+test = 1,390 questions = 2,780 conditions),
+serial client, from measured `wall_serial_s` — not summed latency, which omits
+client overhead:
+
+| shape | wall |
+|---|---|
+| flash alone | **12.3 min** |
+| cascade (flash + judge at 25% escalation) | **20.9 min** |
+| judge alone | 34.4 min |
+| clef-27b alone | 38.7 min |
+| all arms serial | 85.4 min |
+| all three model arms, every split incl. train | ~2.7 h |
+
+Three things the calibration changed about the design:
+
+1. **Co-residency is taxed.** Flash runs 261 ms p50 here vs 165 ms alone, and
+   27B 866 vs 537 — ~1.5–1.6× slower with the chat judge resident on the same
+   machine. These calibration numbers are the honest ones for the intended
+   serving shape; the solo numbers are best-case. Also: the first split each
+   arm runs is slower (judge val 186 s vs test 111 s) — warmup is real and
+   one split of warmup per arm is not enough to hide it.
+2. **Coverage says the judge, AUROC says the 27B, and val can't settle it.**
+   At a 5% budget on val, judge coverage (0.295) actually edges out 27B
+   (0.265) while costing less wall than 27B — but its AUROC is 0.827 (below
+   flash) and its ECE 0.222 (worst of every arm). The judge saturates its
+   probabilities at 0.95/0.05, which makes the tuned operating point work and
+   the *probability itself* untrustworthy. The val gap 0.295 vs 0.265 is
+   inside ±1 SE at n=556; this run cannot distinguish them. The 27B remains
+   the only arm that wins on ranking *and* calibration together.
+3. **The chat endpoint doesn't batch either.** Judge QPS is flat at ~1.8 from
+   c1 to c8, with p50 climbing 270 → 1010 → 1740 ms: pure queueing. This
+   machine serves ~2 requests/s total per resident model regardless of
+   endpoint, so the concurrency knobs on both endpoints are load-shedding
+   controls, not capacity.
+
+Full run plan against these numbers: flash + judge cascade is an evening-free
+**~21 min**; a complete three-arm leaderboard including train is **~2.7 h**.
+Nothing here needs a batch bigger than the current one.
+
 ## Open questions for the next pass
 
 1. **Coverage is the binding constraint, not safety.** Can a ModernBERT sufficiency

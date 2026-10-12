@@ -62,14 +62,25 @@ def main() -> int:
     if (run_dir / "stats.json").exists():
         stats_all = json.loads((run_dir / "stats.json").read_text())
 
+    # kind per arm: the leaderboard recorded it at run time. Inferring kind
+    # from token counts mislabels a no-think judge as a decision model (both
+    # can have small outputs), and the latency advice differs completely.
+    kinds: dict[str, str] = {}
+    report_path = run_dir / "reports" / "report.json"
+    if report_path.exists():
+        report = json.loads(report_path.read_text())
+        kinds = {row["strategy"]: row.get("kind", "?")
+                 for row in report.get("leaderboard", [])}
+
     rows = []
     for pred in sorted((run_dir / "predictions").glob("*_test.jsonl")):
         arm = pred.stem[: -len("_test")]
-        cases_val = (run_dir / "predictions" / f"{arm}_val.jsonl").exists()
+        conc = {}
         lat_path = run_dir / "latency" / f"{arm}.json"
-        conc = json.loads(lat_path.read_text()) if lat_path.exists() else {}
-
-        rows.append(_arm_row(arm, pred, cases_val, conc, stats_all.get(arm, {})))
+        if lat_path.exists():
+            conc = json.loads(lat_path.read_text())
+        rows.append(_arm_row(arm, pred, conc, stats_all.get(arm, {}),
+                              kinds.get(arm, "?")))
 
     if not rows:
         print(f"no predictions in {run_dir}")
@@ -77,42 +88,45 @@ def main() -> int:
 
     print(f"calibration: {len(calib_groups)} question groups from {run_dir.name}")
     print("(sufficiency is 2 conditions per question: sufficient + insufficient)\n")
-    print(f"{'arm':<22}{'p50ms':>7}{'p95ms':>7}{'s/cond':>8}{'fail':>6}"
-          f"{'QPS':>6}{'val+test':>10}{'all':>8}")
-    print("-" * 74)
+    print(f"{'arm':<22}{'kind':<11}{'p50ms':>7}{'p95ms':>7}{'s/cond':>8}"
+          f"{'fail':>6}{'QPS':>7}{'val+test':>10}{'all':>8}")
+    print("-" * 85)
     for r in sorted(rows, key=lambda x: -x["per_cond_s"]):
         full = SIZES["val+test (report set)"] * r["per_cond_s"]
         alls = SIZES["train+val+test (all)"] * r["per_cond_s"]
         qps = f"{r['qps']:.1f}" if r["qps"] else "—"
-        print(f"{r['arm']:<22}{r['p50']:>7.0f}{r['p95']:>7.0f}{r['per_cond_s']:>8.3f}"
-              f"{r['fail_pct']:>5.0f}%{qps:>6}{fmt_dur(full):>10}{fmt_dur(alls):>8}")
+        if r["qps"] > 1000:
+            qps = f"{r['qps']/1000:.0f}k"
+        print(f"{r['arm']:<22}{r['kind']:<11}{r['p50']:>7.0f}{r['p95']:>7.0f}"
+              f"{r['per_cond_s']:>8.3f}{r['fail_pct']:>5.0f}%{qps:>7}"
+              f"{fmt_dur(full):>10}{fmt_dur(alls):>8}")
 
     by = {r["arm"]: r for r in rows}
-    dec = [r for r in rows if r["per_cond_s"] < 1.0]
-    judge = [r for r in rows if r["per_cond_s"] >= 1.0]
+    dec = [r for r in rows if r["kind"] == "system1"]
+    judge = [r for r in rows if r["kind"] == "llm_judge"]
     full_n = SIZES["val+test (report set)"]
 
     print("\ntotal wall-clock for the report set (val+test, 2,780 conditions):")
-    if dec and judge:
-        serial_all = sum(r["per_cond_s"] for r in rows) * full_n
-        print(f"  every arm, serial          {fmt_dur(serial_all)}")
+    serial_all = sum(r["per_cond_s"] for r in rows if r["kind"] != "heuristic")
+    print(f"  all arms, serial          {fmt_dur(serial_all * full_n)}")
     if judge:
         j = min(judge, key=lambda r: r["per_cond_s"])
-        print(f"  judge alone              {fmt_dur(j['per_cond_s'] * full_n)}"
+        print(f"  judge alone             {fmt_dur(j['per_cond_s'] * full_n)}"
               f"   ({j['arm']})")
     if dec:
         d = max(dec, key=lambda r: r["per_cond_s"])
-        print(f"  slowest decision arm     {fmt_dur(d['per_cond_s'] * full_n)}"
+        print(f"  slowest decision arm    {fmt_dur(d['per_cond_s'] * full_n)}"
               f"   ({d['arm']})")
 
     if judge and dec and a.judge_share:
-        d = max(dec, key=lambda r: r["per_cond_s"])
+        d = min(dec, key=lambda r: r["per_cond_s"])
         j = min(judge, key=lambda r: r["per_cond_s"])
         cascade = full_n * (d["per_cond_s"] + a.judge_share * j["per_cond_s"])
-        print(f"\n  cascade @ {a.judge_share:.0%} escalation  {fmt_dur(cascade)}")
-        print("    (decision tier answers outside the ambiguous band; only the")
-        print("    mid-confidence band pays for decode — the only way to make the")
-        print("    judge affordable at full scale)")
+        print(f"\n  cascade @ {a.judge_share:.0%} escalation  {fmt_dur(cascade)}"
+              f"   ({d['arm']} + {j['arm']})")
+        print(f"    vs judge alone            {fmt_dur(j['per_cond_s'] * full_n)}"
+              " — the cascade pays decode only on the band,")
+        print("    so judge-grade escalation comes at near-flash cost.")
 
     print("\nthroughput plateau (concurrency does not help /v1/systemone):")
     for r in sorted(rows, key=lambda x: -x["per_cond_s"]):
@@ -129,8 +143,14 @@ def main() -> int:
     return 0
 
 
-def _arm_row(arm: str, pred: Path, has_val: bool, conc: dict, stats: dict) -> dict:
-    """Per-condition cost from summed latency over the conditions actually run."""
+def _arm_row(arm: str, pred: Path, conc: dict, stats: dict, kind: str) -> dict:
+    """Per-condition cost, preferring measured wall-clock over summed latency.
+
+    wall_serial_s is elapsed time around a split: it includes serialization,
+    retries and client overhead. Summed request latency excludes them, so it
+    quietly under-projects a full run. Use it only when the run predates the
+    wall-clock accounting.
+    """
     lat, errs, tot = [], 0, 0
     for r in read_jsonl(pred):
         tot += 1
@@ -139,22 +159,32 @@ def _arm_row(arm: str, pred: Path, has_val: bool, conc: dict, stats: dict) -> di
         v = r.get("latency_ms")
         if v == v:
             lat.append(float(v))
-    # val split costs the same shape of request; include it when it ran
-    n_conditions = tot * (2 if has_val else 1)
-    wall_s = (sum(lat) / 1000.0) * (2 if has_val else 1)
-    per_cond = wall_s / max(n_conditions, 1)
     arr = np.array(lat) if lat else np.array([float("nan")])
+
+    wall = stats.get("wall_serial_s") or {}
+    n_conditions = tot
+    if wall:
+        wall_s = sum(float(w) for w in wall.values())
+        # each split's wall covers the same number of conditions as test
+        n_conditions = tot * len(wall)
+    else:
+        has_val = pred.with_name(pred.stem[: -len("_test")] + "_val" + pred.suffix
+                                  ).exists()
+        wall_s = (sum(lat) / 1000.0) * (2 if has_val else 1)
+        n_conditions = tot * (2 if has_val else 1)
+
     return {
         "arm": arm,
+        "kind": kind,
         "p50": float(np.median(arr)),
         "p95": float(np.percentile(arr, 95)),
-        "per_cond_s": per_cond,
+        "per_cond_s": wall_s / max(n_conditions, 1),
         "fail_pct": 100.0 * errs / max(tot, 1),
         "qps": float(conc.get("serial", {}).get("throughput_qps_serial")
+                    or conc.get("serial", {}).get("throughput_qps")
                     or 1000.0 / max(np.median(arr), 1e-6)),
         "c4": float(conc.get("c4", {}).get("throughput_qps") or 0),
         "c8": float(conc.get("c8", {}).get("throughput_qps") or 0),
-        "measured_wall": bool((stats.get("wall_serial_s") or {})),
     }
 
 
