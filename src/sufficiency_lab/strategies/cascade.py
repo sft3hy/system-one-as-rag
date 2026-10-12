@@ -5,11 +5,21 @@ lands inside ``[low, high]`` are ambiguous, and that band is where a slow
 judge can pay for itself. Everything outside it is settled at the fast tier.
 
 Thresholds come from thresholds.py (validation only). This module never tunes.
+
+One honest caveat, recorded per escalated case: outside the band the score is
+Clef's calibrated choice probability, inside the band it is the judge's. Those
+are different distributions, so a single threshold over a cascade is tuned on a
+*mixture*. That is normal for cascades and the only way to buy coverage without
+paying decode on every request — but it is why `tier` is persisted, so any
+downstream calibration can be stratified by the tier that actually produced the
+number.
 """
 
 from __future__ import annotations
 
-from ..schema import Case, Decision
+from time import perf_counter
+
+from ..schema import Case
 from .base import BaseStrategy, _clamp
 
 

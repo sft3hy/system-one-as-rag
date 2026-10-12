@@ -39,6 +39,7 @@ from .omlx_client import OmlxClient
 from .resources import ResourceMonitor, gpu_snapshot, unload_model
 from .schema import Case, Decision, write_jsonl
 from .strategies.base import BaseStrategy
+from .strategies.cascade import CascadeStrategy
 from .strategies.heuristic import (
     LexicalCoverageStrategy,
     LengthStrategy,
@@ -74,7 +75,8 @@ class StubStrategy(BaseStrategy):
 # --------------------------------------------------------------------- setup
 
 
-def build_strategy(spec, cfg: RunConfig, client: OmlxClient | None) -> BaseStrategy:
+def build_strategy(spec, cfg: RunConfig, client: OmlxClient | None,
+                   registry: dict[str, "BaseStrategy"] | None = None) -> BaseStrategy:
     q = DEFAULT_QUESTIONS
     if spec.kind == "stub":
         return StubStrategy(spec.name)
@@ -103,6 +105,28 @@ def build_strategy(spec, cfg: RunConfig, client: OmlxClient | None) -> BaseStrat
             cfg.omlx, spec.model, q, name=spec.name, max_tokens=spec.max_tokens,
             enable_thinking=bool(spec.extra.get("thinking", False)),
             temperature=float(spec.extra.get("temperature", 0.0)),
+        )
+    if spec.kind == "cascade":
+        # fast/slow reference other configured arms by name, so the cascade and
+        # the standalone arms it reuses are guaranteed to be the same code paths
+        # with the same rubric — no second implementation to drift apart.
+        reg = registry or {}
+        fast_name = spec.extra.get("fast")
+        slow_name = spec.extra.get("slow")
+        for role, nm in (("fast", fast_name), ("slow", slow_name)):
+            if not nm:
+                raise ValueError(
+                    f"cascade arm {spec.name!r} needs extra.{role}: <arm name>")
+            if nm not in reg:
+                raise ValueError(
+                    f"cascade arm {spec.name!r} references unknown {role} arm "
+                    f"{nm!r}; configured arms: {sorted(reg)}")
+        fast, slow = reg[fast_name], reg[slow_name]
+        return CascadeStrategy(
+            fast, slow,
+            low=float(spec.extra.get("escalate_low", cfg.latency.escalate_low)),
+            high=float(spec.extra.get("escalate_high", cfg.latency.escalate_high)),
+            name=spec.name,
         )
     raise ValueError(f"unknown kind {spec.kind!r} for arm {spec.name!r}")
 
@@ -316,9 +340,20 @@ def run(cfg: RunConfig, *, live: bool = True, cold: bool = False,
     gate_report: dict[str, dict] = {}
     report_split = cfg.splits[-1]
 
+    specs = cfg.models_for()
+    # Two passes: leaf arms first so cascades can reference them by name. A
+    # cascade reuses the *same* strategy instances as the standalone arms, so
+    # the fast tier in a cascade is provably the same code, rubric and client
+    # as the arm measured on its own — not a second copy that can drift.
+    registry: dict[str, BaseStrategy] = {}
+    ordered = ([s for s in specs if s.kind != "cascade"]
+               + [s for s in specs if s.kind == "cascade"])
     try:
-        for spec in cfg.models_for():
-            strategy = build_strategy(spec, cfg, client)
+        for spec in ordered:
+            registry[spec.name] = build_strategy(spec, cfg, client, registry)
+
+        for spec in ordered:
+            strategy = registry[spec.name]
             tag = f"{spec.name} ({spec.kind})"
 
             # Run and persist EVERY split, not just the reported one. Thresholds
@@ -468,11 +503,23 @@ def run(cfg: RunConfig, *, live: bool = True, cold: bool = False,
                 # contradiction tier must be read as unvalidated.
                 "t_conflict_calibrated": cfg.dataset != "sufficiencybench",
             }
-            strategy.close()
+            if isinstance(strategy, CascadeStrategy):
+                stats["escalation_rate"] = round(strategy.escalation_rate, 4)
+                stats["escalations"] = strategy.escalations
+                gate_report[spec.name]["escalation_rate"] = round(
+                    strategy.escalation_rate, 4)
             print(f"[test] {tag}: AUROC={disc['auroc']:.3f} AUPRC={disc['auprc']:.3f} "
                   f"ECE={disc['ece']:.3f} p50={stats['latency_serial'].get('p50_ms')}ms "
                   f"errors={stats['errors']}")
     finally:
+        # Close once, after every arm: a cascade shares instances with the leaf
+        # arms it references, so closing per-arm would hand a closed client to
+        # whatever ran next.
+        for s in registry.values():
+            try:
+                s.close()
+            except Exception:
+                pass
         if client is not None:
             client.close()
 

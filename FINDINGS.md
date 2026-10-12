@@ -131,7 +131,39 @@ gate is the number to size against, not the single-request 165 ms.
   `vm_stat` pressure and stamps `gpu_memory_measured: false` on every report, so a
   report can never imply GPU memory was measured when it was not.
 
-## 8. Server facts worth recording
+## 8. The autoregressive judge: thinking is a luxury, and `response_format` is load-bearing
+
+`Qwen3.8-Flash-Next-oQ4e-mtp` as judge, 24 real SufficiencyBench cases
+(`scripts/ab_judge.py`):
+
+| config | failed cases | p50 | p95 | out tok | AUROC | mean p⁺ | mean p⁻ |
+|---|---|---|---|---|---|---|---|
+| think + schema, 512 tok | **21%** | 1735 ms | 3314 ms | 253 | 1.000 | 0.843 | 0.074 |
+| **no-think + schema** | **0%** | **509 ms** | 713 ms | 45 | 0.924 | 0.967 | 0.358 |
+| no-think, no schema | 67% | 384 ms | 528 ms | 30 | 0.500 | 1.000 | 1.000 |
+| think + schema, 1024 tok | 4% | 1919 ms | 4327 ms | 308 | 0.985 | 0.853 | 0.128 |
+
+Three conclusions:
+
+1. **Thinking is billed against `max_tokens`, and it eats the answer.** omlx
+   returns the chain of thought in `reasoning_content` but counts it toward the
+   budget, so at 512 tokens a fifth of cases reasoned themselves out of ever
+   emitting JSON. Raising to 1024 cuts that to 4% and costs another 18% latency.
+2. **The default is now no-think.** 0% failure at 509 ms for AUROC 0.924 beats
+   1735 ms with a 21% hole for 1.000. Thinking genuinely sharpens the negatives
+   (mean p⁻ 0.074 vs 0.358) — that is real information — but a gate that silently
+   drops one request in five is not a gate. Keep thinking for an offline audit
+   pass, not the online path.
+3. **`response_format` carries the entire task.** Without it, 67% of responses are
+   unparseable prose and discrimination is *exactly* 0.500 — chance. The grammar
+   constraint is not a convenience, it is what makes a usable probability.
+
+Judge-vs-decision economics at the measured 0.509 s/condition: the judge costs
+~3× Clef-Flash per request. A cascade that escalates only a mid-confidence band is
+the only shape that makes an AR judge affordable at full scale (`estimate_full_run.py
+--judge-share`).
+
+## 9. Server facts worth recording
 
 - Model discovery is a startup scan. A freshly downloaded checkpoint is invisible until
   `POST /admin/api/reload` → `{"status":"ok","message":"Re-discovered 11 models"}`,

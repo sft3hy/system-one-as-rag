@@ -4,6 +4,7 @@ every number downstream meaningless."""
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import numpy as np
@@ -20,7 +21,7 @@ from sufficiency_lab.metrics import (
     operating_point,
 )
 from sufficiency_lab.runner import StubStrategy, load_split, run
-from sufficiency_lab.schema import Case, FailureType, TerminalState
+from sufficiency_lab.schema import Case, Decision, FailureType, TerminalState
 from sufficiency_lab.strategies.heuristic import (
     LengthStrategy,
     QuestionOnlyStrategy,
@@ -236,6 +237,104 @@ def test_case_roundtrip_preserves_semantics(tmp_path: Path):
     assert back.failure_type is FailureType.BROKEN_MULTI_HOP
     assert back.required_facts == ("a", "b")
     assert back.sufficient is False
+
+
+# ------------------------------------------------------------------ cascade
+
+
+class _FixedStrategy:
+    """Returns a fixed p, optionally sleeping, so the cascade's routing and
+    latency accounting can be asserted. Latency is *measured* by the base
+    class rather than self-reported, so the slow tier really must sleep."""
+
+    kind = "fixed"
+
+    def __init__(self, p, latency_ms=10.0, error=None, name="fixed"):
+        self.name = name
+        self._p = p
+        self._sleep = latency_ms / 1000.0
+        self._err = error
+        self.questions = DEFAULT_QUESTIONS
+        self.calls = 0
+
+    def predict(self, case):
+        self.calls += 1
+        if self._sleep:
+            time.sleep(self._sleep)
+        if self._err:
+            return Decision(case_id=case.id, strategy=self.name,
+                           p_sufficient=float("nan"), latency_ms=self._sleep * 1e3,
+                           error=self._err)
+        return Decision(case_id=case.id, strategy=self.name, p_sufficient=self._p,
+                        p_conflicting=0.01, probabilities={"sufficient": self._p},
+                        latency_ms=self._sleep * 1e3, input_tokens=100,
+                        output_tokens=0)
+
+    def close(self):
+        return None
+
+
+def test_cascade_escalates_only_inside_the_band():
+    from sufficiency_lab.strategies.cascade import CascadeStrategy
+
+    fast = _FixedStrategy(0.50, latency_ms=20)     # inside [0.35, 0.75]
+    slow = _FixedStrategy(0.90, latency_ms=60)
+    cas = CascadeStrategy(fast, slow, low=0.35, high=0.75)
+    d = cas.predict(make_case(1, True))
+    assert d.p_sufficient == pytest.approx(0.90), "band must defer to the judge"
+    assert d.label == "judge_tier"
+    assert cas.escalation_rate == 1.0
+    assert fast.calls == 1 and slow.calls == 1
+    assert d.latency_ms > 0
+    assert d.input_tokens == 200, "both tiers' tokens are billed"
+
+
+def test_cascade_does_not_pay_for_decode_outside_the_band():
+    """Routing is asserted structurally (call counts), not by wall clock:
+    macOS sleep granularity overshoots by ~5x at tens-of-milliseconds scales,
+    so a timing assertion here tests the OS scheduler rather than the cascade.
+    Real latency is measured against the live server in the benchmark."""
+    from sufficiency_lab.strategies.cascade import CascadeStrategy
+
+    fast = _FixedStrategy(0.95, latency_ms=20)
+    slow = _FixedStrategy(0.10, latency_ms=60)
+    cas = CascadeStrategy(fast, slow, low=0.35, high=0.75)
+    d = cas.predict(make_case(1, True))
+    assert slow.calls == 0, "high confidence must never reach the judge"
+    assert fast.calls == 1
+    assert d.p_sufficient == pytest.approx(0.95)
+    assert cas.escalation_rate == 0.0
+    assert d.label == "fast_tier"
+    assert d.latency_ms > 0, "latency is still recorded at the fast tier"
+
+    fast2 = _FixedStrategy(0.05, latency_ms=20)
+    cas2 = CascadeStrategy(fast2, _FixedStrategy(0.99), low=0.35, high=0.75)
+    assert cas2.predict(make_case(2, False)).p_sufficient == pytest.approx(0.05)
+    assert cas2.escalation_rate == 0.0
+
+
+def test_cascade_keeps_fast_signal_when_judge_fails():
+    """A judge error must not erase a usable fast-tier score: dropping the
+    case would silently bias the split toward easy questions."""
+    from sufficiency_lab.strategies.cascade import CascadeStrategy
+
+    fast = _FixedStrategy(0.55, latency_ms=20)
+    slow = _FixedStrategy(0.0, error="ValueError: truncated")
+    cas = CascadeStrategy(fast, slow, low=0.35, high=0.75)
+    d = cas.predict(make_case(1, True))
+    assert d.p_sufficient == pytest.approx(0.55)
+    assert not np.isnan(d.p_sufficient)
+    assert d.label == "fast_fallback"
+
+
+def test_cascade_wiring_requires_existing_arm_names():
+    from sufficiency_lab.config import ModelSpec
+    from sufficiency_lab.runner import build_strategy
+
+    cfg = load_config(Path("configs/sufficiencybench.yaml"))
+    spec = ModelSpec(name="casc", kind="cascade", extra={"fast": "nope"})
+    with pytest.raises(ValueError, match="unknown fast arm"):
+        build_strategy(spec, cfg, None, registry={})
 
 
 def test_quadrant_derivation_is_explicit():
