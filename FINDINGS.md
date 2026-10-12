@@ -202,12 +202,28 @@ client overhead:
 
 Three things the calibration changed about the design:
 
-1. **Co-residency is taxed.** Flash runs 261 ms p50 here vs 165 ms alone, and
-   27B 866 vs 537 — ~1.5–1.6× slower with the chat judge resident on the same
-   machine. These calibration numbers are the honest ones for the intended
-   serving shape; the solo numbers are best-case. Also: the first split each
-   arm runs is slower (judge val 186 s vs test 111 s) — warmup is real and
-   one split of warmup per arm is not enough to hide it.
+1. **Contention, not co-residency, is the latency lever — proven, not asserted.**
+   The calibration's Flash p50 (261 ms) is 1.6× the clean probe (165 ms), so I
+   isolated the cause with direct tests:
+   - *Memory residency is free.* 40 identical requests: 137 ms p50 with the chat
+     judge resident, 138 ms after evicting it. Sharing the GPU at rest costs nothing.
+   - *Harness overhead is negligible.* `strategy.predict` measures 170 ms wall vs
+     163 ms raw client round-trip on the same contexts — ~7 ms of parsing and
+     bookkeeping, and the server-reported p50 equals the wall p50, so nothing hides
+     inside the harness.
+   - *Compute contention is brutal.* Running clef-Flash serially while two threads
+     hammer `/v1/systemone` on the 27B: Flash p50 jumps to **726 ms, 4.4×**. Because
+     the decision engine does not batch across requests (finding §6), concurrent
+     traffic does not share the compute — it collides on it.
+
+   Consequence: arms must run **serially**, which the harness already does; the
+   261 ms figure is just what a crowded multi-model box settles at under sustained
+   single-arm load, and `wall_serial_s` (the real elapsed time) already bakes it
+   into the projections above — that is why estimating from wall beats estimating
+   from the probe. Use the eviction route only to free memory for a cold load:
+   reloading the judge took **14.8 s** before its first request, and the first
+   split after any cold load runs measurably slower (judge val 186 s vs test 111 s)
+   as caches and the speculative-MTP draft warm up.
 2. **Coverage says the judge, AUROC says the 27B, and val can't settle it.**
    At a 5% budget on val, judge coverage (0.295) actually edges out 27B
    (0.265) while costing less wall than 27B — but its AUROC is 0.827 (below
