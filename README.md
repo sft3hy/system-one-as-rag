@@ -54,11 +54,14 @@ response so the adapter is written against bytes rather than prose.
 uv run sufficiency-lab -c configs/sufficiencybench.yaml --dry-run   # offline, no server
 uv run sufficiency-lab -c configs/smoke.yaml                         # one model, real data
 uv run sufficiency-lab -c configs/compare.yaml --cold                # 9B vs 27B + cold load
+uv run sufficiency-lab -c configs/timing.yaml                        # cost calibration
+uv run sufficiency-lab -c configs/cascade.yaml                       # production two-tier shape
 uv run pytest                                                        # harness correctness
 ```
 
 `--dry-run` scores a deterministic stub on synthetic fixtures with the real metrics and
-report path, so schema regressions surface without a GPU.
+report path, so schema regressions surface without a GPU. It namespaces its own run id
+and refuses to write into a directory holding measured predictions.
 
 Probes (run these before trusting any number):
 
@@ -66,9 +69,24 @@ Probes (run these before trusting any number):
 uv run python scripts/probe_server.py --model clef-flash-oQ4e     # endpoint + contract
 uv run python scripts/probe_instructions.py                        # does noul bind?
 uv run python scripts/probe_stability.py --reps 12                 # reproducibility + interference
+uv run python scripts/ab_judge.py --n 24                           # is chain-of-thought worth it?
+uv run python scripts/estimate_full_run.py results/timing-100 --judge-share 0.25
 uv run python scripts/make_figures.py results/<run_id>             # risk/coverage plots
 uv run python scripts/report_from.py results/<run_id>              # rebuild report, no re-run
 ```
+
+## The three serving shapes
+
+| shape | config | what it costs | why you would pick it |
+|---|---|---|---|
+| Flash alone | `smoke.yaml` | 165 ms, 6.2 QPS | cheapest; ~16% coverage at 5% risk |
+| 27B alone | `compare.yaml` | 535 ms, 1.9 QPS | +0.05 AUROC, ~23% coverage |
+| Cascade | `cascade.yaml` | 165 ms + judge on the band only | buys judge accuracy without paying decode on every request |
+
+A cascade answers outside `[escalate_low, escalate_high]` at the fast tier and sends
+only the mid-confidence band to the judge. Note that this mixes two score
+distributions — Clef's calibrated choice probability and the judge's — so `tier` is
+recorded per case and any later calibration should be stratified by it.
 
 ## The two-tier contract
 
