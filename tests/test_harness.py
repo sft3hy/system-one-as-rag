@@ -337,6 +337,39 @@ def test_cascade_wiring_requires_existing_arm_names():
         build_strategy(spec, cfg, None, registry={})
 
 
+def test_cascade_yaml_wires_to_real_instances():
+    """The cascade must reuse the same objects as the standalone arms, and the
+    config must actually deliver its knobs — a whitelist that silently dropped
+    extra.fast produced a cascade that could not be built at all."""
+    from sufficiency_lab.runner import build_strategy
+    from sufficiency_lab.strategies.cascade import CascadeStrategy
+    from sufficiency_lab.strategies.llm_judge import LLMJudgeStrategy
+    from sufficiency_lab.strategies.system1 import SystemOneStrategy
+
+    cfg = load_config(Path("configs/cascade.yaml"))
+    specs = cfg.models_for()
+    reg: dict = {}
+    for s in [x for x in specs if x.kind != "cascade"] + \
+             [x for x in specs if x.kind == "cascade"]:
+        reg[s.name] = build_strategy(s, cfg, object(), reg)
+
+    cas = reg["cascade"]
+    assert isinstance(cas, CascadeStrategy)
+    assert reg["cascade"].fast is reg["clef-flash"], "fast tier must be shared"
+    assert reg["cascade"].slow is reg["qwen38-judge"], "slow tier must be shared"
+    assert (cas.low, cas.high) == (0.35, 0.75), "band edges must reach the arm"
+    assert isinstance(reg["clef-flash"], SystemOneStrategy)
+    assert reg["clef-flash"].quantization == "oQ4e"
+    judge = reg["qwen38-judge"]
+    assert isinstance(judge, LLMJudgeStrategy)
+    assert judge.enable_thinking is False, "thinking default must be off"
+    for s in reg.values():
+        try:
+            s.close()
+        except Exception:
+            pass
+
+
 def test_quadrant_derivation_is_explicit():
     assert datasets.QUADRANT_FROM_FIELDS[(False, True)] == "Q3_insufficient_knows"
     assert datasets._failure_type("multi_hop", False) is FailureType.BROKEN_MULTI_HOP

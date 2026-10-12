@@ -172,8 +172,19 @@ def load_config(path: str | Path) -> RunConfig:
         t_conflict=float(lat_raw.get("t_conflict", 0.50)),
     )
 
-    models = tuple(
-        ModelSpec(
+    reserved = {"name", "kind", "model", "enabled", "questions",
+                "batch_questions", "max_tokens", "gate"}
+    models = []
+    for m in raw.get("models", []):
+        # Strategy knobs may be nested under `extra:` or written flat alongside
+        # the reserved keys. Both are accepted and merged, so a knob is never
+        # silently dropped by a whitelist that forgot a name.
+        extra = {k: v for k, v in m.items() if k not in reserved and k != "extra"}
+        nested = m.get("extra") or {}
+        if not isinstance(nested, dict):
+            raise ValueError(f"model {m.get('name')!r}: `extra` must be a mapping")
+        extra.update(nested)
+        models.append(ModelSpec(
             name=m["name"],
             kind=m["kind"],
             model=m.get("model"),
@@ -182,12 +193,9 @@ def load_config(path: str | Path) -> RunConfig:
             batch_questions=bool(m.get("batch_questions", True)),
             max_tokens=int(m.get("max_tokens", 64)),
             gate=m.get("gate", "fast"),
-            extra={k: v for k, v in m.items()
-                   if k in {"quantization", "notes", "revision", "thinking",
-                           "temperature", "diagnostic"}},
-        )
-        for m in raw.get("models", [])
-    )
+            extra=extra,
+        ))
+    models = tuple(models)
 
     cfg = RunConfig(
         run_id=run.get("id", "run"),

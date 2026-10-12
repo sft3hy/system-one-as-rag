@@ -1,0 +1,82 @@
+# Production shape: Clef-Flash answers, judge only in the ambiguous band.
+#
+# Why this shape, from measurements in FINDINGS.md:
+#   - Clef-Flash: 165 ms p50, 6.2 QPS, AUROC 0.828 — cheap, but coverage at a
+#     5% false-sufficient budget is only ~16%, so it blocks most answerable traffic.
+#   - Clef-27B: AUROC 0.879 and 23% coverage, but 535 ms p50 and 1.9 QPS.
+#   - Judge (no-think, schema): ~509 ms p50, AUROC 0.924 on a 24-case probe,
+#     and it is the only arm that sharpens the negatives properly.
+#   - QPS is flat from 1 to 8 concurrent on /v1/systemone: concurrency is
+#     queueing, not capacity. So the cheap tier must absorb the volume.
+#
+# The gate pays for decode only on the mid-confidence band. With the measured
+# distributions that band holds roughly a fifth of traffic, which is what makes
+# an autoregressive judge affordable at all: escalating 100% of traffic to the
+# judge costs ~5x the fast tier for the same decisions on the other 80%.
+
+run:
+  id: cascade-flash-judge-v1
+  dataset: sufficiencybench
+  data_path: ./data/raw
+  out_dir: ./results
+  splits: [val, test]
+  limit: 150
+
+omlx:
+  base_url: http://127.0.0.1:8000/v1
+  settings_path: ~/.omlx/settings.json
+  timeout_s: 600
+  retries: 2
+  max_concurrency: 8
+  truncate: true
+
+risk:
+  max_false_sufficient: 0.05
+  bootstrap: 2000
+  seed: 13
+
+latency:
+  warmup: 3
+  repeats: 1
+  concurrency: [1, 4, 8]
+  fast_budget_ms: 200        # measured Flash p50 165ms, p95 196ms — this is tight
+  judge_budget_ms: 900       # measured no-think judge p50 ~509ms, p95 ~713ms
+  escalate_low: 0.35
+  escalate_high: 0.75
+  t_conflict: 0.50
+
+models:
+  # fast tier
+  - name: clef-flash
+    kind: system1
+    model: clef-flash-oQ4e
+    batch_questions: true
+    quantization: oQ4e
+    extra: {diagnostic: true}
+
+  # slow tier
+  - name: qwen38-judge
+    kind: llm_judge
+    model: Qwen3.8-Flash-Next-oQ4e-mtp
+    gate: slow
+    max_tokens: 256
+    extra: {thinking: false}
+
+  # the cascade itself: reuses the two instances above, same rubric
+  - name: cascade
+    kind: cascade
+    gate: cascade
+    extra:
+      fast: clef-flash
+      slow: qwen38-judge
+      escalate_low: 0.35
+      escalate_high: 0.75
+
+  # reference points: can the cascade beat 27B on accuracy while staying
+  # nearer Flash on latency? If not, deploy 27B and drop the judge.
+  - name: clef-27b
+    kind: system1
+    model: clef-oQ4e
+    batch_questions: true
+    quantization: oQ4e
+    extra: {diagnostic: true}
