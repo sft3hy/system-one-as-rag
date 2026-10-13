@@ -122,11 +122,27 @@ def build_strategy(spec, cfg: RunConfig, client: OmlxClient | None,
                     f"cascade arm {spec.name!r} references unknown {role} arm "
                     f"{nm!r}; configured arms: {sorted(reg)}")
         fast, slow = reg[fast_name], reg[slow_name]
+        calibrator = None
+        cal_path = spec.extra.get("calibration")
+        if cal_path:
+            from .calibration import TierCalibrator
+            p = Path(cal_path)
+            if not p.is_absolute():
+                p = REPO / cal_path
+            # fail loud: a cascade configured to be calibrated that silently
+            # runs uncalibrated reproduces the coverage collapse in §11
+            if not p.exists():
+                raise FileNotFoundError(
+                    f"cascade {spec.name!r}: calibration file {cal_path!r} not "
+                    "found — fit it with scripts/fit_cascade_calibration.py from "
+                    "a calibration run's val predictions")
+            calibrator = TierCalibrator.load(p)
         return CascadeStrategy(
             fast, slow,
             low=float(spec.extra.get("escalate_low", cfg.latency.escalate_low)),
             high=float(spec.extra.get("escalate_high", cfg.latency.escalate_high)),
             name=spec.name,
+            calibrator=calibrator,
         )
     raise ValueError(f"unknown kind {spec.kind!r} for arm {spec.name!r}")
 

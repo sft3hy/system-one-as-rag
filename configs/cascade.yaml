@@ -71,6 +71,12 @@ models:
       slow: qwen38-judge
       escalate_low: 0.35
       escalate_high: 0.75
+      # map judge scores onto flash's scale before the threshold sees them, so
+      # the tuner no longer has to thread the needle between the judge's
+      # {0.95, 1.0} quantization spikes (FINDINGS §11). Fit offline with
+      # scripts/fit_cascade_calibration.py; the runner errors if it's missing
+      # rather than silently running uncalibrated.
+      calibration: calibration/cascade-flash-judge-v1.json
 
   # reference points: can the cascade beat 27B on accuracy while staying
   # nearer Flash on latency? If not, deploy 27B and drop the judge.

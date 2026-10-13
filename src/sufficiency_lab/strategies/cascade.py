@@ -7,12 +7,14 @@ judge can pay for itself. Everything outside it is settled at the fast tier.
 Thresholds come from thresholds.py (validation only). This module never tunes.
 
 One honest caveat, recorded per escalated case: outside the band the score is
-Clef's calibrated choice probability, inside the band it is the judge's. Those
-are different distributions, so a single threshold over a cascade is tuned on a
-*mixture*. That is normal for cascades and the only way to buy coverage without
-paying decode on every request — but it is why `tier` is persisted, so any
-downstream calibration can be stratified by the tier that actually produced the
-number.
+Clef's, inside the band it is the judge's. Those are different distributions —
+the no-think judge answers on ~{0.0, 0.1, 0.95, 1.0} while Clef spreads over
+(0, 0.94) — so a single threshold over the raw mixture measurably collapses
+coverage (FINDINGS §11). `calibrator` fixes this before fusion: each tier's
+score becomes empirical P(sufficient | score, tier) fitted on val, and one
+threshold then means the same thing on both sides of the band. `tier` is
+persisted regardless, so any downstream analysis can stratify by the tier that
+actually produced the number.
 """
 
 from __future__ import annotations
@@ -27,11 +29,20 @@ class CascadeStrategy(BaseStrategy):
     kind = "cascade"
 
     def __init__(self, fast: BaseStrategy, slow: BaseStrategy,
-                 low: float = 0.35, high: float = 0.75, name: str = "cascade"):
+                 low: float = 0.35, high: float = 0.75, name: str = "cascade",
+                 calibrator=None):
+        """`calibrator` (sufficiency_lab.calibration.TierCalibrator, optional)
+        maps each tier's raw score onto empirical reliability fitted on val.
+        Without it the cascade emits raw mixed scores and the threshold tuner
+        must thread the needle between the judge's quantization spikes — which
+        measurably collapses coverage (FINDINGS §11). With it, one threshold
+        means one thing on both sides of the band.
+        """
         super().__init__(fast.questions)
         self.fast, self.slow = fast, slow
         self.low, self.high = low, high
         self.name = name
+        self.calibrator = calibrator
         self.escalations = 0
         self.total = 0
 
@@ -46,10 +57,15 @@ class CascadeStrategy(BaseStrategy):
         if fast.error or not (self.low <= fast.p_sufficient <= self.high):
             probs = dict(fast.probabilities)
             probs["escalated"] = 0.0
+            probs["raw_p_sufficient"] = fast.p_sufficient
+            p = fast.p_sufficient
+            if self.calibrator is not None:
+                p = self.calibrator.transform_fast(p)
+                probs["calibrated"] = 1.0
             meta = {"label": "fast_tier", "ttft_ms": fast.latency_ms,
                    "input_tokens": fast.input_tokens,
                    "output_tokens": fast.output_tokens}
-            return fast.p_sufficient, fast.p_conflicting, probs, meta
+            return p, fast.p_conflicting, probs, meta
 
         self.escalations += 1
         slow = self.slow.predict(case)
@@ -57,6 +73,7 @@ class CascadeStrategy(BaseStrategy):
         if slow.error:  # never lose the fast signal
             probs = dict(fast.probabilities)
             probs["escalated"] = 1.0
+            probs["raw_p_sufficient"] = fast.p_sufficient
             return fast.p_sufficient, fast.p_conflicting, probs, {
                 "label": "fast_fallback", "ttft_ms": elapsed,
                 "escalation_error": slow.error,
@@ -64,6 +81,7 @@ class CascadeStrategy(BaseStrategy):
         probs = dict(slow.probabilities)
         probs["escalated"] = 1.0
         probs["fast_p_sufficient"] = fast.p_sufficient
+        probs["raw_p_sufficient"] = slow.p_sufficient
         meta = {
             "label": "judge_tier",
             "ttft_ms": elapsed,
@@ -71,6 +89,9 @@ class CascadeStrategy(BaseStrategy):
             "output_tokens": slow.output_tokens,
         }
         p = _clamp(slow.p_sufficient)
+        if self.calibrator is not None:
+            p = self.calibrator.transform_slow(p)
+            probs["calibrated"] = 1.0
         con = slow.p_conflicting if slow.p_conflicting is not None else fast.p_conflicting
         return p, con, probs, meta
 

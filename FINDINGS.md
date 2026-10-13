@@ -286,15 +286,59 @@ candidate upgrades are:
 
 - **(a) calibrate escalation, not just routing**: map escalated judge scores onto
   flash's val scale (quantile match) before the threshold sees them; a single
-  threshold then behaves per-tier, and `t_j = 0.99` stops being load-bearing on
+  threshold then behaves per-tier, and no razor-edge bar sits load-bearing on
   the judge's exact saturation values.
 - **(b) pay for thinking on escalated cases only** (`max_tokens: 1024`,
   thinking on): sharper band decisions at ~1.9 s × 23% ≈ +0.44 s/cond — the
   full-set judge budget doubles, but only on the band.
 
-Until (a) or (b) lands, **27B is the recommended single-arm gate**: the only
-arm that wins ranking *and* calibration together. The cascade is affordable and
-correctly routed, but its judge adds little at no-think.
+### The fix: calibrate the judge onto flash's scale (§11 option (a), implemented)
+
+Calibrating BOTH tiers onto reliability fails — flash's own tail is empty
+above 0.94, so isotonic collapses every high score onto one 0.98 plateau whose
+*actual* accuracy is 0.76, and coverage goes to zero (measured). The fix is
+asymmetric: **flash passes through raw** (it is the reference scale, native ECE
+0.11), and **the judge is mapped onto it** — score → in-band accuracy → the
+flash score that shares that accuracy. `calibration.py` + `scripts/fit_cascade_calibration.py`;
+the fitted ladder (on val):
+
+| judge says | val accuracy in band | → flash-equivalent |
+|---|---|---|
+| 0.00 / 0.10 | ~0.18 | 0.034 (blocked) |
+| 0.85 / **0.95** | ~0.48 | **0.508 (blocked)** |
+| **1.00** | 0.98 | **0.943 (clears)** |
+
+The 0.95 spike — right only ~half the time — now lands where flash is equally
+untrustworthy, far below any 5%-risk threshold, instead of masquerading next to
+1.0. Verified live on the real `predict` path: all 17 escalated test cases
+transformed, **zero leaked raw**.
+
+Result — every shape on the same coherent run (limit 150 groups = 300
+conditions/split, each arm's threshold tuned on val to its own 5% budget, test
+reported at that threshold; escalation rate 21.7% live):
+
+| shape | test cov | test fpr | test AUROC | test ECE |
+|---|---|---|---|---|
+| broken shared-threshold cascade | 0.023 | 0.013 | 0.763 | — |
+| flash alone | 0.157 | 0.033 | 0.828 | 0.114 |
+| **calibrated cascade** | **0.180** | 0.047 | 0.818 | **0.107** |
+| qwen38-judge alone | 0.260 | 0.060 | 0.827 | 0.218 |
+| **27B alone** | **0.230** | 0.060 | **0.879** | 0.109 |
+
+Calibration rescues the cascade from 0.023 → 0.180 test coverage, and its ECE
+(0.107) is now the best of any arm — mapping the judge onto flash's scale
+genuinely fixes the mixed-scale miscalibration. But the ceiling is unchanged:
+the cascade still trails 27B on coverage (0.180 vs 0.230) *and* AUROC (0.818
+vs 0.879), and its AUROC sits a hair below flash-alone — the ~7 escalated cases
+the judge gets maximally right add a little coverage at a touch more fpr and
+cost flash's ranking nothing it couldn't keep.
+
+**Verdict unchanged and now stress-tested: deploy 27B** as the single-arm gate —
+best ranking, best calibration, no mixed-scale fragility. The calibrated cascade
+is the correct design if you must stay on Flash and want the judge as a safety
+net, but at this model set it buys +0.017 coverage over flash for +50% latency
+and does not close the gap to 27B. Option (b) — thinking on escalated cases — is
+the only lever that might make the judge earn more than its single spike.
 
 Timing model validated: cascade cost/cond measured on the test split at 0.29 s
 (85.8 s / 300) ≈ flash + 23% × judge = 0.436 s modeled, with the model's val

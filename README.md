@@ -77,16 +77,28 @@ uv run python scripts/report_from.py results/<run_id>              # rebuild rep
 
 ## The three serving shapes
 
-| shape | config | what it costs | why you would pick it |
-|---|---|---|---|
-| Flash alone | `smoke.yaml` | 165 ms, 6.2 QPS | cheapest; ~16% coverage at 5% risk |
-| 27B alone | `compare.yaml` | 535 ms, 1.9 QPS | +0.05 AUROC, ~23% coverage |
-| Cascade | `cascade.yaml` | 165 ms + judge on the band only | buys judge accuracy without paying decode on every request |
+| shape | config | what it costs | test cov @ 5% | verdict |
+|---|---|---|---|---|
+| Flash alone | `smoke.yaml` | 165 ms p50, ~6 QPS | 0.157 | cheapest, lowest coverage |
+| **27B alone** | `compare.yaml` | 535 ms p50, ~1.9 QPS | **0.230** | **recommended** — best AUROC + calibration |
+| Cascade | `cascade.yaml` | 165 ms + judge on ~22% band | 0.180 | affordable, but trails 27B |
 
 A cascade answers outside `[escalate_low, escalate_high]` at the fast tier and sends
-only the mid-confidence band to the judge. Note that this mixes two score
-distributions — Clef's calibrated choice probability and the judge's — so `tier` is
-recorded per case and any later calibration should be stratified by it.
+only the mid-confidence band to the judge. That mixes two score distributions —
+Clef spreads over (0, 0.94), the no-think judge answers on ~{0.0, 0.1, 0.95,
+1.0} — so **the judge must be calibrated onto flash's scale before the threshold
+sees it**, or coverage collapses (FINDINGS §11). Fit it, then point the cascade
+at it:
+
+```bash
+uv run python scripts/fit_cascade_calibration.py results/<run>   # -> calibration/<run>.json
+uv run sufficiency-lab -c configs/cascade.yaml                   # loads it via extra.calibration
+```
+
+Calibration raises cascade test coverage 0.023 → 0.180 and its ECE to the best of
+any arm (0.107), but it still trails 27B — the judge only earns its escalations at
+its single `1.0` spike. `tier` is recorded per case regardless, so any downstream
+analysis can stratify by the tier that produced the number.
 
 ## The two-tier contract
 

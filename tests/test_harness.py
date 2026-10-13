@@ -370,6 +370,107 @@ def test_cascade_yaml_wires_to_real_instances():
             pass
 
 
+# --------------------------------------------------------------- calibration
+
+
+def test_calibration_neutralizes_the_judge_spike():
+    """The whole reason calibration exists (FINDINGS §11): the no-think judge
+    answers ~{0.95, 1.0} and is right only about half the time at 0.95. On the
+    raw mixture a threshold can't exclude the wrong spike without also excluding
+    the right one. Mapping onto flash's scale must push 0.95 down to mid-range
+    (a flash score that's only ~60% accurate sits far below any 0.89 threshold)
+    while 1.0, where the judge is ~98% right, lands high enough to clear."""
+    from sufficiency_lab.calibration import TierCalibrator
+
+    rng = np.random.default_rng(7)
+    # flash DECISIVE scores live outside the band on both sides — low ones
+    # mostly insufficient, high ones mostly sufficient — so its accuracy curve
+    # spans near-chance to near-perfect and the inversion has real room to
+    # place a judge answer. A fixture of only-high scores (first cut at this)
+    # gives the curve no low anchor and the judge's spike can only land at the
+    # band edge, which is not a meaningful demotion.
+    hi_p = rng.uniform(0.75, 0.94, 180)
+    hi_y = (rng.random(180) < np.clip((hi_p - 0.4) / 0.5, 0.5, 0.98)).astype(int)
+    lo_p = rng.uniform(0.05, 0.35, 120)
+    lo_y = (rng.random(120) < np.clip((lo_p - 0.02) / 0.33, 0.02, 0.5)).astype(int)
+    fast_p = np.concatenate([hi_p, lo_p])
+    fast_y = np.concatenate([hi_y, lo_y])
+    # judge inside the band: ~half its 0.95s are wrong, almost all its 1.0s right
+    j_p = np.concatenate([np.full(60, 0.95), np.full(40, 1.0)])
+    j_y = np.concatenate([(rng.random(60) < 0.45).astype(int),
+                          (rng.random(40) < 0.95).astype(int)])
+
+    cal = TierCalibrator.fit(fast_p, fast_y, j_p, j_y)
+    assert cal.transform_fast(0.9) == pytest.approx(0.9), "flash passes through"
+    spike = cal.transform_slow(0.95)
+    top = cal.transform_slow(1.0)
+    assert spike < 0.75, f"judge 0.95 must demote below the band, got {spike}"
+    assert top > 0.75, f"judge 1.0 must rank above the band edge, got {top}"
+    assert cal.transform_slow(0.0) < cal.transform_slow(0.1) + 1e-9
+    # monotone: the map never ranks a less-trustworthy answer higher
+    assert cal.transform_slow(0.85) <= cal.transform_slow(1.0)
+
+
+def test_calibration_roundtrips_through_disk(tmp_path: Path):
+    """A live run loads what the offline fit wrote; a silent mismatch there
+    would re-introduce the mixed-scale bug while every test still passed."""
+    from sufficiency_lab.calibration import TierCalibrator
+
+    rng = np.random.default_rng(3)
+    fp = rng.uniform(0.7, 0.94, 120)
+    fy = (rng.random(120) < (fp - 0.4)).astype(int)
+    jp = np.concatenate([np.full(40, 0.95), np.full(30, 1.0)])
+    jy = np.concatenate([(rng.random(40) < 0.5).astype(int),
+                         (rng.random(30) < 0.97).astype(int)])
+    cal = TierCalibrator.fit(fp, fy, jp, jy)
+    p = tmp_path / "cal.json"
+    cal.save(p)
+    reloaded = TierCalibrator.load(p)
+    for v in (0.0, 0.1, 0.5, 0.85, 0.95, 1.0):
+        assert reloaded.transform_slow(v) == pytest.approx(cal.transform_slow(v)), v
+    assert reloaded.transform_fast(0.88) == pytest.approx(0.88)
+
+
+def test_calibration_refuses_underpowered_tiers():
+    """An isotonic curve fit on a handful of points memorizes them and reports
+    perfect reliability — the most dangerous possible silent failure, because the
+    numbers look great. It must raise instead."""
+    from sufficiency_lab.calibration import TierCalibrator
+
+    with pytest.raises(ValueError, match="too few"):
+        TierCalibrator.fit([0.9] * 40, [1] * 40, [0.95, 1.0], [1, 0])
+
+
+def test_configured_cascade_loads_calibration(tmp_path: Path):
+    """The live build path must attach the calibrator to the cascade, and a
+    missing file must abort rather than run an uncalibrated cascade that is
+    configured to be calibrated (§11 shows that collapses coverage)."""
+    from sufficiency_lab import runner
+    from sufficiency_lab.calibration import TierCalibrator
+    from sufficiency_lab.config import ModelSpec
+
+    cal_path = tmp_path / "calibration" / "c.json"
+    rng = np.random.default_rng(1)
+    fp = rng.uniform(0.7, 0.94, 120)
+    fy = (rng.random(120) < (fp - 0.4)).astype(int)
+    TierCalibrator.fit(fp, fy, np.array([0.95] * 30 + [1.0] * 20),
+                       np.array([0] * 15 + [1] * 15 + [1] * 20)).save(cal_path)
+
+    cfg = load_config(Path("configs/sufficiencybench.yaml"))
+    base = {"fast": "clef-flash", "slow": "qwen38-judge"}
+    reg = {"clef-flash": _FixedStrategy(0.5), "qwen38-judge": _FixedStrategy(0.95)}
+    spec = ModelSpec(name="c", kind="cascade",
+                    extra={**base, "calibration": str(cal_path)})
+    cas = runner.build_strategy(spec, cfg, object(), dict(reg))
+    assert cas.calibrator is not None
+    assert cas.calibrator.transform_slow(0.95) < 0.75
+
+    spec2 = ModelSpec(name="c2", kind="cascade",
+                      extra={**base, "calibration": str(tmp_path / "absent.json")})
+    with pytest.raises(FileNotFoundError):
+        runner.build_strategy(spec2, cfg, object(), dict(reg))
+
+
 def test_quadrant_derivation_is_explicit():
     assert datasets.QUADRANT_FROM_FIELDS[(False, True)] == "Q3_insufficient_knows"
     assert datasets._failure_type("multi_hop", False) is FailureType.BROKEN_MULTI_HOP
