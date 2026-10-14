@@ -265,13 +265,22 @@ Phase 2 (`sweep-full-v1`, six arms × 2,780 conditions) launched; merge via
 `scripts/merge_sweep_leaderboard.py`.
 
 **Incident log:** at 12:51 the runner and two sidecars were SIGKILLed mid-run
-(stray process sweep — `phase2-run.log` empty, buffers lost with the process).
-Nothing measured was lost: predictions persist per arm-split. Completed and banked:
+(likely memory-pressure eviction during openjev-27b cold load — `phase2-run.log`
+empty, buffers lost with the process). Nothing measured was lost: predictions persist
+per arm-split. Completed and banked:
 laya, laya-typed-decisions, von, openjev-flash-9b (all 2,780 each, zero errors;
 **openjev-flash-9b test 0.860 vs clef-flash 0.830** — lead holds at full n;
-openjev-27b val 0.914). Resumed via `configs/sweep-full-resume.yaml` (same run dir,
-remaining arms only) under `nohup` so the next sweep cannot kill it; sidecars relaunched
-likewise. Completion marker: `results/phase2-resume.done`.
+openjev-27b val 0.914). Second failure's **root cause found**: at 15:10 a co-tenant
+`vllm serve LiquidAI/LFM2.5-24B --host 127.0.0.1 --port 8000` (from
+cooker-deep-dives) bound the *more specific* loopback address and stole every local
+connection from omlx's wildcard `*:8000` — the resume died of ConnectTimeout against
+an imposter server answering `lfm25-24b-a2b`. User-approved: vllm killed (PID 62237),
+loopback reclaimed (18 models back, decision endpoint verified, omlx PID 88476 never
+restarted so banked predictions stay valid). Resume relaunched detached under nohup
+(`configs/sweep-full-resume.yaml`, same run dir, remaining arms only); completion
+marker `results/phase2-resume.done`.
+**Lesson banked: before every run, assert `GET /v1/models` reports `owned_by: omlx`
+with the expected 18 ids — a wildcard bind is not ownership.**
 
 Nothing in Phases 0–2 touches the banked Clef predictions; worst case a new arm is
 discarded and the merged leaderboard still stands on the full run.
