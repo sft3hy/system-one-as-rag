@@ -19,7 +19,7 @@ import statistics
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict
+from dataclasses import asdict, replace as dc_replace
 from pathlib import Path
 from typing import Sequence
 
@@ -38,8 +38,10 @@ from .metrics import (
 from .omlx_client import OmlxClient
 from .resources import ResourceMonitor, gpu_snapshot, unload_model
 from .schema import Case, Decision, write_jsonl
+from .strategies.ar_decision import ARDecisionStrategy
 from .strategies.base import BaseStrategy
 from .strategies.cascade import CascadeStrategy
+from .strategies.encoder import EncoderSidecarStrategy
 from .strategies.heuristic import (
     LexicalCoverageStrategy,
     LengthStrategy,
@@ -106,6 +108,30 @@ def build_strategy(spec, cfg: RunConfig, client: OmlxClient | None,
             enable_thinking=bool(spec.extra.get("thinking", False)),
             temperature=float(spec.extra.get("temperature", 0.0)),
         )
+    if spec.kind == "ar_decision":
+        return ARDecisionStrategy(
+            cfg.omlx, spec.model, q, name=spec.name,
+            samples=int(spec.extra.get("samples", 12)),
+            temperature=float(spec.extra.get("temperature", 1.0)))
+    if spec.kind == "encoder":
+        url = spec.extra.get("sidecar_url")
+        if not url:
+            raise ValueError(
+                f"encoder arm {spec.name!r} needs extra.sidecar_url "
+                "(start scripts/encoder_sidecar.py for this model first)")
+        q_used = q
+        primitive = spec.extra.get("primitive")
+        if primitive:
+            # von's native axis is the noul scalar (measured AUROC 0.740 vs
+            # 0.58 on choice options); noul wants a declarative condition,
+            # not our interrogative sufficiency rubric
+            q_used = dc_replace(
+                q, primitive=primitive,
+                sufficient_instructions=spec.extra.get(
+                    "noul_instructions", q.sufficient_instructions))
+        return EncoderSidecarStrategy(
+            url, q_used, name=spec.name,
+            include_diagnostic=bool(spec.extra.get("diagnostic", False)))
     if spec.kind == "cascade":
         # fast/slow reference other configured arms by name, so the cascade and
         # the standalone arms it reuses are guaranteed to be the same code paths

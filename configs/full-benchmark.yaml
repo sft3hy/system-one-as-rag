@@ -1,0 +1,79 @@
+# Full-dataset benchmark — all arms, val + test, no limit.
+#
+# First run on the complete SufficiencyBench report set:
+# 1,390 questions x 2 conditions = 2,780 conditions per arm.
+# Everything before this ran capped at 100-150 groups (FINDINGS §3-§11).
+#
+# Prereqs (same as configs/cascade.yaml — see FINDINGS §9):
+#   - omlx serving, clef-flash-oQ4e + clef-oQ4e + judge loadable, API key in ~/.omlx
+#   - calibration/cascade-flash-judge-v1.json exists (runner refuses otherwise)
+#   - NOTHING ELSE running on this box: contention inflates latency 4.4x (§10)
+
+run:
+  id: full-benchmark-v1
+  dataset: sufficiencybench
+  data_path: ./data/raw
+  out_dir: ./results
+  splits: [val, test]        # thresholds tune on val; test reported once, at those thresholds
+  limit: null                # <-- the whole dataset. this line is the entire point of this file.
+
+omlx:
+  base_url: http://127.0.0.1:8000/v1
+  settings_path: ~/.omlx/settings.json
+  timeout_s: 600
+  retries: 2
+  max_concurrency: 1         # serial: the decision engine does not batch (§6); concurrency is queueing
+  truncate: true
+
+risk:
+  max_false_sufficient: 0.05
+  bootstrap: 2000
+  seed: 13                   # same seed as every prior run — CI widths stay comparable
+
+latency:
+  warmup: 3
+  repeats: 1
+  concurrency: [1, 4, 8]     # measured again, now on full data; expect the same flat QPS
+  fast_budget_ms: 200
+  judge_budget_ms: 900
+  escalate_low: 0.35
+  escalate_high: 0.75
+  t_conflict: 0.50
+
+models:
+  # order matters: cheapest first. the first split after any cold load runs
+  # slower (§10 warmup inflation), so let flash eat that penalty, not the headline arm.
+  - name: lexical
+    kind: heuristic
+    model: lexical
+
+  - name: clef-flash
+    kind: system1
+    model: clef-flash-oQ4e
+    batch_questions: true
+    quantization: oQ4e
+    extra: {diagnostic: true}
+
+  - name: qwen38-judge
+    kind: llm_judge
+    model: Qwen3.8-Flash-Next-oQ4e-mtp
+    gate: slow
+    max_tokens: 256
+    extra: {thinking: false}
+
+  - name: cascade
+    kind: cascade
+    gate: cascade
+    extra:
+      fast: clef-flash
+      slow: qwen38-judge
+      escalate_low: 0.35
+      escalate_high: 0.75
+      calibration: calibration/cascade-flash-judge-v1.json
+
+  - name: clef-27b
+    kind: system1
+    model: clef-oQ4e
+    batch_questions: true
+    quantization: oQ4e
+    extra: {diagnostic: true}

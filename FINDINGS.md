@@ -345,6 +345,48 @@ Timing model validated: cascade cost/cond measured on the test split at 0.29 s
 split inflated by first-after-contention warmup exactly as §10 describes
 (189 s val vs 86 s test for the same work).
 
+## 12. The full-dataset run — every headline confirmed at 4–7× the sample
+
+`configs/full-benchmark.yaml`, `full-benchmark-v1`: the complete report set (val 556 + test
+2,224 conditions), five arms, serial, **78.4 min wall, zero errors, 13,900 predictions**.
+Wall came in 8% under the §10 projection (85 min) — `wall_serial_s` is now a validated
+timing model, 1.09× conservative.
+
+Test split, thresholds tuned on val only:
+
+| arm | AUROC | ECE | thr | FPR | coverage | p50 | p95 | s/cond |
+|---|---|---|---|---|---|---|---|---|
+| clef-27b | **0.871** | 0.093 | 0.93 | 0.049 | 0.238 | 534 ms | 666 ms | 0.552 |
+| clef-flash | 0.830 | 0.090 | 0.89 | 0.039 | 0.162 | **165 ms** | 196 ms | **0.169** |
+| qwen38-judge | 0.826 | 0.208 | 0.96 | **0.055 ✗** | **0.256** | 511 ms | 1,777 ms | 0.662 |
+| cascade (calibrated) | 0.823 | **0.081** | 0.89 | 0.047 | 0.187 | 174 ms | 885 ms | 0.308 |
+| lexical | 0.665 | 0.142 | 0.88 | 0.049 | 0.114 | ~0 | ~0 | ~0 |
+
+Paired grouped bootstrap (2,000 reps, 95% CI): 27b − flash **+0.041 [+0.034, +0.048]**,
+27b − judge **+0.044 [+0.038, +0.051]**, cascade − 27b −0.048 [−0.055, −0.040] — all
+significant; flash − judge +0.003 [−0.004, +0.011] and cascade − flash −0.007
+[−0.013, +0.000] — the two ties held as ties or near-ties, now with ±0.007 CIs.
+
+What full n settled:
+
+1. **Deploy-27B verdict: confirmed, not tentative.** Every capped-run lead survived with CI
+   widths roughly halved.
+2. **The judge is disqualified standalone: test FPR 0.055 breaches the 5% budget** at the
+   val-tuned 0.96. Its top coverage (0.256) cannot be bought at acceptable risk — the
+   spike-distribution problem (§11) does not average out at scale, it re-asserts.
+3. **The calibration fix scales.** Escalation 23.9% (531/2,224); of the judge's 251
+   "0.95" verdicts inside the band, **123 were wrong** — all mapped to 0.508 and blocked,
+   zero leaked. Cascade ECE 0.081 is the best of any arm on full data; calibration is not a
+   small-sample trick.
+4. **Cascade-vs-flash is no longer a maybe:** −0.007 [−0.013, +0.000] — the escalation
+   costs ranking it never returns; its only gifts remain +0.025 coverage and best ECE,
+   at 2× flash's wall. The 27B gap (−0.048) did not close.
+5. **Determinism re-verified:** all §11 case-file scores reproduced identically inside the
+   full run (same thresholds, same predictions byte-for-byte on shared case ids).
+
+Open questions above stand; #1 (coverage headroom via a trained sufficiency probe) is now
+the only lever that can move the ceiling, at these numbers.
+
 ## Open questions for the next pass
 
 1. **Coverage is the binding constraint, not safety.** Can a ModernBERT sufficiency
@@ -359,3 +401,31 @@ split inflated by first-after-contention warmup exactly as §10 describes
    before the contradiction tier can be trusted, despite the promising 0.839 probe hit.
 5. Can anything break the 6 QPS ceiling — client-side request batching, a second
    resident replica, or an upstream change to the decision engine?
+
+## 13. System-one sweep: server auto-detection + Phase 0 interface gates (2026-10-14)
+
+8/8 repos downloaded (~55 GB). After `POST /admin/api/reload` (18 models discovered),
+`/admin/api/models` `model_type` shows how omlx classifies each family:
+
+| model | detected | route that actually works |
+|---|---|---|
+| OpenJev-Flash-9B-MLX | `decision` | `/v1/systemone` native, wire contract verbatim |
+| openjev-MLX-4bit (27B) | `decision` | native |
+| clef-omni-4bit | `decision` | **load fails**: `qwen3_omni_moe` unsupported — excluded |
+| Tev1-4B-experimental | `vlm` | `/v1/chat/completions` only, **no logprobs ever returned**; k=12 temp-1.0 vote-rate score |
+| laya / laya-typed-decisions | `llm` | own SDK sidecar (`.venv-encoder`, `laya.Router`) — question wire is byte-identical to our contract format |
+| von | `embedding` | own SDK sidecar (`von.VonClient(local=True)`), `VON_CHECKPOINT_DIR` avoids re-download |
+| opendecider-nano | `embedding` | sidecar pending (not yet wired; nano is lowest priority) |
+
+Interface measurements (n=24–48 val):
+- OpenJev 9B Δ+0.650 / sd 0.409; OpenJev 27B **Δ+0.767 / sd 0.441** — capacity transfers.
+- Tev k-sampling Δ+0.368; prompt MUST be the card JSON schema form, else it rambles.
+- laya Δ+0.118 (choice); laya ships invalid calibration temps → SDK floors confidence at
+  0.5; we consume probabilities, not confidence, so unaffected but noted.
+- von choice wire is **rubric-dominated**: long criteria descriptions flatten it
+  (AUROC 0.582). Noul scalar with declarative condition: **AUROC 0.740**, Δ+0.164 —
+  von's arm is permanently configured `primitive: noul`.
+- determinism: every working arm reproduces scores byte-identically (spread 0.0000).
+
+Phase 0 verdict: **6/7 arms pass all four gates**; clef-omni excluded by server
+architecture, not behavior. Phase 1 (`sweep-smoke-v1`, --limit 150) running with the six.
