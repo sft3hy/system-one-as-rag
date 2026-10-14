@@ -240,5 +240,29 @@ Phase 0 gates (`scripts/probe_sweep_model.py`, n=24 val, four §1 blockers):
 2 encoder families; von on noul). Only clef-omni is excluded, by server architecture
 support, not by behavior. Phase 1 (calibration-size, --limit 150) is go for all six.
 
+### Phase 1 calibration-size results (`sweep-smoke-v1`, 150 groups = 300 conditions/split, zero errors)
+
+| arm | val AUROC | test AUROC (uncertified — small n) |
+|---|---|---|
+| openjev-27b-4bit | **0.911** | **0.883** |
+| openjev-flash-9b | 0.877 | 0.845 |
+| tev1-4b (k=12 votes) | 0.819 | 0.816 |
+| laya-typed-decisions | 0.721 | 0.676 |
+| von-1.3 (noul) | 0.651 | 0.643 |
+| laya | 0.632 | 0.626 |
+
+The headline if it survives full n: **OpenJev-27B beats the incumbent clef-27b
+(0.871 test) and OpenJev-Flash-9B beats clef-flash (0.830)** — a genuinely new
+leaderboard, with the CC-BY-NC 27B benchmark-only and Flash-9B as the production
+candidate. Tev's k-sampling landing at judge-level AUROC (~0.82) is the second
+surprise. laya at 0.63 ≈ lexical level: the encoder-family finding is
+typed-decisions > base-laya, but neither beats a decision checkpoint.
+
+Clef drift guard (20 val cases re-scored vs banked full-run predictions):
+**byte-identical on both Clef arms — banked predictions remain valid for the merge.**
+
+Phase 2 (`sweep-full-v1`, six arms × 2,780 conditions) launched; merge via
+`scripts/merge_sweep_leaderboard.py`.
+
 Nothing in Phases 0–2 touches the banked Clef predictions; worst case a new arm is
 discarded and the merged leaderboard still stands on the full run.
