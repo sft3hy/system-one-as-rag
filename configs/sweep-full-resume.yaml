@@ -1,0 +1,59 @@
+# Phase 2 full-dataset sweep — the SIX new System-1 arms, val + test, no limit.
+# 2,780 conditions per arm. Predictions LAND ALONGSIDE full-benchmark-v1 in a new
+# run dir; scripts/merge_sweep_leaderboard.py joins them into one 11-arm leaderboard
+# WITHOUT re-running clef-flash / clef-27b (their banked predictions at
+# results/full-benchmark-v1/predictions/ are byte-reproducible, FINDINGS §12).
+#
+# Prereqs:
+#   - Phase 0 gates passed (PLAN-SYSTEMONE-SWEEP §9) and Phase 1 leaderboard sane
+#   - Clef 20-case drift spot-check green (server unchanged since full-benchmark-v1)
+#   - sidecars up:
+#       .venv-encoder/bin/python scripts/encoder_sidecar.py laya 8101 &
+#       .venv-encoder/bin/python scripts/encoder_sidecar.py laya-typed-decisions 8103 &
+#       .venv-encoder/bin/python scripts/encoder_sidecar.py von  8102 &
+#   - NOTHING ELSE on this box (contention inflates latency 4.4x, §10)
+
+run:
+  id: sweep-full-v1  # resume: writes into the same run dir; completed arm files untouched unless rerun here
+  dataset: sufficiencybench
+  data_path: ./data/raw
+  out_dir: ./results
+  splits: [val, test]
+  limit: null
+
+omlx:
+  base_url: http://127.0.0.1:8000/v1
+  settings_path: ~/.omlx/settings.json
+  timeout_s: 600
+  retries: 2
+  max_concurrency: 1
+  truncate: true
+
+risk:
+  max_false_sufficient: 0.05
+  bootstrap: 2000
+  seed: 13                   # identical seed: CIs comparable with full-benchmark-v1
+
+latency:
+  warmup: 3
+  repeats: 1
+  concurrency: [1]
+  fast_budget_ms: 200
+  judge_budget_ms: 900
+  escalate_low: 0.35
+  escalate_high: 0.75
+  t_conflict: 0.50
+
+models:
+  - name: openjev-27b-4bit
+    kind: system1
+    model: openjev-MLX-4bit            # CC-BY-NC: BENCHMARK ONLY, never production
+    batch_questions: true
+    extra: {diagnostic: true}
+
+  - name: tev1-4b
+    kind: ar_decision
+    model: Tev1-4B-experimental
+    extra:
+      samples: 12
+      temperature: 1.0
