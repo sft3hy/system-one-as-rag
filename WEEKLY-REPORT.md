@@ -69,37 +69,48 @@ through a confidently-wrong answer on **no more than 5% of the questions it appr
 
 ## 4. Results — the chart that matters
 
-![Safe auto-answer rate](results/report-figures/exec_safe_autoanswer.png)
+![Safe auto-answer rate, whole field](results/report-figures/exec_field_coverage.png)
 
-**How to read this chart:** each bar is one contestant; the length is the share of all user
-questions the gate would let the AI answer directly while keeping its error rate within our 5%
-budget. Longer is better — that's traffic we can serve automatically.
+**How to read this chart:** each bar is one of the eleven models we've now tested; the length
+is the share of all user questions the gate would let the AI answer directly while keeping its
+error rate within our 5% budget. **Green = the model honestly keeps that promise; red = it
+breaks it.** Shorter bars aren't failures — the cheap interns (Laya, 6%) simply aren't
+smart enough to tell which questions are safe, so they approve almost nothing.
 
-**What it says (full dataset, 1,390 questions — these are final numbers, not a preview):**
-- All four AI options can safely auto-answer only **16–26% of traffic** today. The rest gets
-  blocked — and **54–72% of the blocked questions were actually answerable correctly**. The
-  problem isn't that the gate lets wrong answers through; it's that it's too timid.
-- **The chat judge's bar looks the longest, and that's a trap.** It reaches 26% only by
-  sounding artificially confident — when we audit *how sure it actually is* (see §5), it is the
-  least trustworthy of all. On the full exam it now **breaks our 5% safety budget outright**
-  (5.5%) — its extra coverage officially cannot be bought at the risk we accept.
-- **The two-step combo** (19%) does not beat simply using the senior analyst (24%) — the
-  complicated pipeline isn't earning its complexity this week.
+**What it says (full dataset, 2,224 test questions — final numbers):**
+- The three widest bars — OpenJev-27B (31%), chat judge (26%), Tev (21%) — are **all red**:
+  they cover the most traffic by promising more than they can deliver. That coverage cannot be
+  bought at the risk we accept.
+- **Clef-27B (green, 24%) remains the widest bar that is honest.** This week's eight-model
+  search did not dislodge it — it confirmed that combining top judgement with top restraint is
+  rare.
+- **OpenJev-Flash-9B (green, 18%) is this week's genuine catch**: a budget-compliant fast
+  option that judges better than Clef-Flash (see §10).
+- **The bottleneck is still timidity, not danger**: even the honest champions auto-answer only
+  16–24% of traffic, and roughly half of what they block was actually safe to answer.
+  Coverage — not safety — is where the business value is locked up (§9).
+- **The chat judge's bar is a trap** (§6): it reaches 26% only by sounding artificially
+  confident; on the full exam it breaks the 5% budget outright (5.5%).
 
 ## 5. How each candidate performed — the scoreboard
 
-![Quality vs speed](results/report-figures/exec_quality_vs_speed.png)
+![Quality vs speed, whole field](results/report-figures/exec_field_quality_speed.png)
 
-**How to read this chart:** every dot is one contestant. Right = higher judgement quality
-(AUROC, explained below); further up the axis = lower delay per question. There is no free
-lunch — you can usually have quality or speed, and the interesting question is who gets the
-best trade-off.
+**How to read this chart:** every dot is one model — all eleven we've now tested. Right =
+higher judgement quality (AUROC, explained below); further up = lower delay per question
+(the axis multiplies by ten each step — Laya at the bottom-left answers 35× faster than Tev).
+There is no free lunch; the interesting question is who gets the best trade-off — and whether
+they keep their 5% safety promise (green) or break it (red).
 
-**What it says:**
-- **Clef-27B is the standout:** the most accurate judge by a clear margin, at a delay
-  (half a second) that is acceptable for a pre-answer checkpoint.
-- **Clef-Flash is the speed king** (0.17 seconds) with decent accuracy — the budget option.
-- **The chat judge** sits near flash on quality but its confidence numbers are unusable (§6).
+**What it says (all 11 models, full dataset):**
+- **Clef-27B (👑) stays the pick:** the only model that is simultaneously among the best
+  judges *and* green. Its quality lead over the whole green field is statistically decisive.
+- **OpenJev-27B (red, top-right) is the week's big story:** highest judgement quality we
+  have ever measured (0.889) — but red, disqualified (§6, §10).
+- **OpenJev-Flash-9B (green star)** beats Clef-Flash on quality decisively at moderate speed —
+  the fast-tier upgrade to price next week.
+- **The intern tier (bottom-left) is cheap but blunt:** Laya/Von answer almost nothing
+  safely; Tev pays chat-model speed (far right) for mid-table green-less accuracy.
 
 ### The scoreboard numbers, demystified
 
@@ -160,43 +171,52 @@ Two useful gut checks when you see one quoted:
   the full exam the statistics are now decisive, not suggestive (§5).
 
 
-## 6. The week's key discovery: the chat judge's fake confidence
+## 6. The week's key discovery: three models, three ways to fake confidence
+
+![Why the red models are red — confidence across the whole field](results/report-figures/exec_calibration_field.png)
+
+**How to read this chart:** each panel shows how one model spread its confidence across the
+same 2,224 test questions — blue = cases it should approve, red = cases it should block. The
+dashed bar is the approval threshold. A *good* judge pushes blue right and red left with a
+clean gap; **any red that leaks past the dashed bar is risk we pay for.**
+
+**What it says — the new rival, the judge, and the champion:**
+- **OpenJev-27B (second panel) fails differently from the judge — and it's the more
+  interesting failure.** It is *not* shouty: its scores look beautifully separated (that's the
+  0.889). But look at the left: a big red mountain of "0–10% sure" correct rejections… and a
+  thin but stubborn tail of red cases sitting at 95–100% that should have been blocked. Even
+  the strictest threshold can't cut them — that tail is its 7.3% budget breach. Brilliant
+  instincts, unlucky certainty. Our existing "translator" calibration recipe (§10 next steps)
+  is designed to squash exactly this tail — the highest-value follow-up now on the board.
+- **The chat judge (third panel) shout-storm confirmed at full scale:** almost everything lands
+  on four values (0%, 10%, 95%, 100%), and of 531 escalated cases **251 came back "95% sure"
+  — 123 of them wrong**. Our shipped translator maps 95% → ~51% (block) and rescued the
+  two-step combo from 2% → 19% coverage, best-calibrated on the board — still not enough to
+  beat Clef-27B.
+- **Clef-27B (first panel) does the boring, correct thing:** opinions spread smoothly, no
+  spikes, no heavy tail past the bar. Boring is exactly what a safety gate should look like.
+- **Laya-typed (right)** is honest but timid — its energies never reach the bar, so it
+  approves almost nothing: safe, and nearly useless.
+
+*Historical note: the first version of this chart (below) is how we caught the judge's fake
+confidence last week — same phenomenon, now with the whole field to compare against.*
 
 ![Score distributions](results/report-figures/score_distributions.png)
 
-**How to read this chart:** each panel shows how one model spread its confidence scores across
-556 test cases — blue bars = cases it should approve (evidence sufficient), red = cases it
-should block. A *good* judge pushes the blue bars to the right and the red bars to the left,
-with a clean gap between them.
-
-**What it says:**
-- **Clef-Flash and Clef-27B (left, middle)** behave like real analysts: they spread their
-  opinions across the whole 0–100% range, and the blue/red separation (their "quality") is what
-  makes a working gate.
-- **The chat judge (right)** doesn't have opinions — it *shouts*. Almost every answer lands on
-  exactly four values: 0%, 10%, 95%, or 100%. Worse, its 95% answers are right only about half
-  the time — it uses 95% to mean "no idea." That's why its trustworthiness score (ECE) is the
-  worst of every option, and why a safety threshold placed on its scores is a razor's edge.
-  On the full exam the scale of the trap is stark: of 531 cases sent to the judge, **251 came
-  back "95% sure" — and 123 of those were wrong**.
-- **The fix we shipped:** we built a "translator" that converts the judge's shouty values onto
-  Clef-Flash's honest scale before any threshold sees them (95% → "actually worth ~51%, block";
-  100% → "worth ~94%, approve"). Verified live at full scale: **all 251 of the judge's
-  "95%" verdicts — including all 123 confidently-wrong ones — landed at ~51% and were
-  correctly blocked**; zero leaked through untranslated. This rescued the two-step combo from
-  near-uselessness (2% → 19% coverage) and made it the *best-calibrated* option on the board —
-  but still not good enough to beat Clef-27B outright.
-
 ## 7. What the machine costs (and it fits)
 
-| | Clef-Flash | Clef-27B |
-|---|---|---|
-| Typical delay per checkpoint | 0.17 s | 0.54 s |
-| Questions processed per second | ~6 | ~2 |
-| Server memory | ~36 GB | ~53 GB |
-| Cost basis | input only, ~750 tokens/question | same |
+| | Clef-Flash | Clef-27B | OpenJev-Flash-9B ★ | OpenJev-27B (research) | Tev | Laya-typed |
+|---|---|---|---|---|---|---|
+| Typical delay per checkpoint | 0.17 s | 0.54 s | 0.47 s | 0.61 s | 1.52 s (×12 votes) | 0.06 s |
+| Questions per second (serial) | ~6 | ~2 | ~2 | ~1.6 | ~0.7 | ~16 |
+| Memory | ~36 GB peak (measured) | ~53 GB peak (measured) | 9.3 GB weights | 14.8 GB weights | 9.1 GB weights | off-box sidecar (~3 GB) |
+| Cost basis | input only, ~750 tokens/question | same | same | same | 13× requests | local, no tokens |
 
-- Both fit comfortably on the Mac Studio (256 GB) **alongside** the chat models we already run.
+- Both Clefs fit comfortably on the Mac Studio (256 GB) **alongside** the chat models we
+  already run (peaks measured in the full-benchmark run). The OpenJev checkpoints are
+  physically smaller than their Clef rivals (weights listed; resident peaks during serving
+  weren't separately captured this week — flagged for the next run), and the encoder interns
+  run off the GPU in their own little side-cars.
 - Important operational finding: **running several models at once doesn't add capacity** —
   throughput stays pinned and requests just queue up. We now schedule the heavy checks serially
   and design around ~6 questions/second per model, which changes how we size a future rollout.
