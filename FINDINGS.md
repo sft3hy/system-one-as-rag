@@ -429,3 +429,55 @@ Interface measurements (n=24–48 val):
 
 Phase 0 verdict: **6/7 arms pass all four gates**; clef-omni excluded by server
 architecture, not behavior. Phase 1 (`sweep-smoke-v1`, --limit 150) running with the six.
+
+## 14. System-one sweep — full-dataset results (2026-10-14)
+
+`sweep-full-v1`: six new arms × 2,780 conditions, zero errors, zero reruns of banked
+Clef predictions (drift spot-check green first). Merged with `full-benchmark-v1` via
+`scripts/merge_sweep_leaderboard.py` → `results/merged-leaderboard-v1/`. Same contract,
+same val-tuned ≤5% budget, same seed 13 / 2000 group bootstrap — every CI comparable.
+
+| # | arm | AUROC [95% CI] | Δ vs clef-27b [CI] | thr | test FPR | coverage | p50 ms |
+|---|---|---|---|---|---|---|---|
+| 1 | openjev-27b-4bit | **0.889** [0.880, 0.899] | **+0.018** [+0.014, +0.023] | 0.99 | **0.073 ✗** | 0.308 | 610 |
+| 2 | clef-27b | 0.871 [0.860, 0.881] | — | 0.93 | 0.049 ✓ | 0.238 | 534 |
+| 3 | openjev-flash-9b | 0.860 [0.849, 0.870] | −0.011 [−0.017, −0.005] | 0.99 | 0.042 ✓ | 0.175 | 470 |
+| 4 | clef-flash | 0.830 [0.819, 0.840] | −0.041 [−0.047, −0.034] | 0.89 | 0.039 ✓ | 0.162 | 165 |
+| 5 | qwen38-judge | 0.826 | −0.044 | 0.96 | 0.055 ✗ | 0.256 | 511 |
+| 6 | cascade | 0.823 | −0.048 | 0.89 | 0.047 ✓ | 0.187 | 174 |
+| 7 | tev1-4b | 0.805 [0.793, 0.816] | −0.066 [−0.075, −0.057] | 0.92 | 0.058 ✗ | 0.206 | 1517 |
+| 8 | laya-typed-decisions | 0.689 [0.678, 0.700] | −0.182 | 0.83 | 0.024 ✓ | 0.056 | 62 |
+| 9 | lexical | 0.665 | −0.206 | 0.88 | 0.049 ✓ | 0.114 | 0 |
+| 10 | von-1.3 (noul) | 0.649 [0.636, 0.661] | −0.222 | 0.84 | 0.000 ✓ | **0.000** | 127 |
+| 11 | laya | 0.622 [0.611, 0.633] | −0.249 | 0.86 | 0.040 ✓ | 0.060 | 43 |
+
+Certified paired deltas (group bootstrap, seed 13): openjev-27b − clef-27b
+= +0.0181 [+0.0137, +0.0227]; openjev-flash-9b − clef-flash = **+0.0301**
+**[+0.0238, +0.0361]**; openjev-27b − openjev-flash-9b = +0.0291 [+0.0240, +0.0345];
+laya-typed − lexical = +0.0241 [+0.0118, +0.0365]. All significant.
+
+**Findings:**
+1. **AUROC champion is new: OpenJev-27B (0.889).** Significant +0.018 over the
+   incumbent. BUT it **cannot certify under the 5% budget**: its val FPR floors at
+   0.058 (threshold fallback 0.99) and runs at **0.073 on test** — the same failure
+   mode that disqualified the chat judge, arriving from the opposite direction
+   (over-confident tail, not 0.95-spikes). Ranking power ≠ risk control; this
+   benchmark punishes both.
+2. **Fast tier changes hands: OpenJev-Flash-9B** certifies (FPR 0.042 ✓) and beats
+   clef-flash by a certified +0.030. Cost: 2.8× latency (470 vs 165 ms p50) and
+   half the coverage of its 27B sibling. Production recommendation becomes
+   **clef-27b gate + OpenJev-Flash-9B fast tier** — pending a license read of the
+   OpenJev 9B weights (Flash-9B itself: check; the 27B is CC-BY-NC, benchmark-only).
+3. **Tev1-4B** (AR, k=12 votes, 1.5 s/case): 0.805, fails budget (0.058) — as a
+   *behavioral* System 1 emulation it works, but pays autoregressive latency for
+   sub-Clef accuracy. Interesting architecture, wrong price.
+4. **Encoder family verdict:** laya-typed > lexical (certified +0.024) at 62 ms —
+   genuinely cheap and alive; base laya/von rank below lexical-level usefulness as
+   standalone gates; von's certifiable operating point admits nothing (coverage 0.000
+   at thr 0.84) — an abstention machine, not a gate.
+5. **Operational:** launchd ownership (`com.homelab.sweepresume`) survived everything;
+   lesson from the vllm port-hijack banked (§13): assert `owned_by: omlx` pre-run.
+   Residual: the launchd submit job relaunches once after success — kill the job or
+   use a plist with KeepAlive=false on next sweep.
+
+Charts: `results/report-figures/merged_{leaderboard,risk_coverage,accuracy_vs_latency}.png`.
