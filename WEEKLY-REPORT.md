@@ -42,6 +42,10 @@ through a confidently-wrong answer on **no more than 5% of the questions it appr
    confirmed the fix works end-to-end — and still holds at full scale.
 3. **Made the deployment decision** and stress-tested it on the complete dataset: this is the
    week we can say, with statistics behind it, which gate to ship.
+4. **Widened the talent search: eight new open-source "instant judgement" models** from
+   around the internet were discovered, vetted, and sat the same full exam under the same
+   rules (§10). Six completed; one couldn't even run on our hardware; one failed an
+   entrance exam. **Result: the crown stands, but the runner-up changes.**
 
 ## 3. The five contestants
 
@@ -52,6 +56,16 @@ through a confidently-wrong answer on **no more than 5% of the questions it appr
 | **Chat judge** | General chat model asked to referee each case | Consultant — talks a good game, overconfident |
 | **Two-step combo** | Junior triages everything; only the hard 22% goes to the consultant | Junior + escalation |
 | **Baselines** | Simple word-overlap and size checks | Checklists, no AI at all |
+
+### …and six new challengers (§10)
+
+| Challenger | What it is | Analogy |
+|---|---|---|
+| **OpenJev-27B** | Biggest of a rival "instant judgement" family | Brilliant but cocky senior analyst — sharpest instincts, signs off on things he shouldn't |
+| **OpenJev-Flash-9B** | Mid-size from the same family | Solid senior analyst — beats our junior on the exam, works a bit slower |
+| **Tev** | A chat model trained to commit to an answer without waffle | Analyst forced to answer yes/no, 12 times, no hedging |
+| **Laya & Laya-typed** | Lightweight "one-glance" checkers (one pass, no thinking) | Speed-reading interns |
+| **Von** | Single-glance gut-feel checker, Apache-licensed | The intern who stamps "don't know" rather than risk an error |
 
 ## 4. Results — the chart that matters
 
@@ -265,6 +279,12 @@ engineered now (it is literally the best-calibrated option on the board), but it
 justify its complexity. The full exam also delivered a new, clean disqualifier: the chat
 judge run alone **exceeds our 5% safety budget (5.5%)** — its headline coverage cannot be
 bought at the risk we accept.
+**The eight-model search (§10) did not overturn this — it strengthened it.** The one rival
+that judged *better* than Clef-27B broke the same safety budget the chat judge did; every
+other rival was further back. Clef-27B remains the only contestant that wins quality and
+obedience together. One concrete upgrade did fall out of the search: if/when we run the
+budget-compliant fast tier, **OpenJev-Flash-9B beats Clef-Flash by a statistically decisive
+margin** (+0.03 AUROC) at a moderate latency cost — a swap worth pricing (§10).
 
 1. **Biggest opportunity:** every option today answers only ~1 in 5 questions it could safely
    answer. Next we test a purpose-trained "sufficiency probe" that could lift that substantially
@@ -276,11 +296,53 @@ bought at the risk we accept.
    questions/second per model; a second replica or an upstream fix (batching) unblocks rollout
    scale.
 
+## 10. The talent search: eight new models, one verdict
+
+This week we asked: *is there a better gate we haven't tried?* We searched Hugging Face (the
+public library of AI models) for every open-source model that promises the same
+"one-glance sufficiency judgement" our Clef models do, vetted licenses, and put every one
+that could run on our machine through the identical exam, identical 5% safety budget,
+identical statistics.
+
+![The whole field](results/report-figures/merged_leaderboard.png)
+
+**How to read this chart:** every model we have ever tested, ranked by raw judgement quality
+(AUROC — see §5), with its honest statistical range shown as a black whisker. The red dashed
+line is our incumbent Clef-27B's score. A model only truly beats it if its *whole whisker*
+sits to the right of that line.
+
+**What the field said:**
+
+- **One rival judged better — and failed the same test that sank the chat judge.**
+  OpenJev-27B scored a genuinely higher AUROC (0.889 — a decisive, significant win over
+  Clef's 0.87). But its confidence runs too hot at the top: at *every* possible strictness
+  setting it waves through 7.3% unsafe answers — over our 5% budget, no exceptions. A gate
+  that judges brilliantly but can't be trusted to say "no" is not a gate. **The crown
+  stands.**
+- **A genuine upgrade for the budget tier: OpenJev-Flash-9B.** It *does* stay inside the
+  5% budget, and beats Clef-Flash decisively (0.860 vs 0.830). If we keep a fast tier,
+  this is the one to price — with a license check first (its bigger sibling carries a
+  non-commercial license; that one was tested strictly as research and never considered
+  for production).
+- **The cheap interns are real but junior.** The two Laya models and Von run in
+  0.04–0.13 seconds — the cheapest AI options on the board — and Laya-typed measurably
+  beats the no-AI checklist (a significant +0.02). But none comes close to a Clef. Von
+  passed the safety test by refusing to approve *anything* — safe, useless.
+- **A curiosity with a lesson:** Tev is a chat model trained to commit to snap answers.
+  Quizzed 12 times per case and averaged, it scored 0.805 — respectable, but it pays full
+  chat-model speed (1.5 seconds — 9× our junior) for mid-table accuracy.
+
+The meta-lesson for the roadmap: **raw judgement quality is no longer scarce — reliable
+self-restraint is.** Two of three high-accuracy rivals self-destructed on the calibration
+test that Clef passes. Our next big lever (§9's sufficiency probe) should be judged on both.
+
 ---
 
-*Appendix — full technical detail for anyone who wants it:* `FINDINGS.md` (12 sections of
-measurements and methodology), `REPORT.md` (model-by-model summary), `PLAN-FULL-RUN.md` (how
-the full run was planned and how the actuals compared), raw run data in
-`results/full-benchmark-v1/` (13,900 predictions), all charts reproducible via
-`scripts/make_report_figures.py full-benchmark-v1`, `scripts/make_exec_figures.py
-full-benchmark-v1` and `scripts/make_roc_explainer.py full-benchmark-v1`.*
+*Appendix — full technical detail for anyone who wants it:* `FINDINGS.md` (14 sections of
+measurements and methodology; §13–§14 are this week's model search), `REPORT.md`
+(model-by-model summary incl. the merged 11-arm leaderboard), `PLAN-FULL-RUN.md` and
+`PLAN-SYSTEMONE-SWEEP.md` (how the runs were planned vs how they went), raw run data in
+`results/full-benchmark-v1/` (13,900 predictions) and `results/sweep-full-v1/` (16,680),
+the merged tables in `results/merged-leaderboard-v1/`, all charts reproducible via
+`scripts/make_report_figures.py`, `scripts/make_exec_figures.py`,
+`scripts/make_roc_explainer.py` and `scripts/make_merged_figures.py`.*

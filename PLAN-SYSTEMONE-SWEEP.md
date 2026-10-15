@@ -284,3 +284,14 @@ with the expected 18 ids — a wildcard bind is not ownership.**
 
 Nothing in Phases 0–2 touches the banked Clef predictions; worst case a new arm is
 discarded and the merged leaderboard still stands on the full run.
+
+## 10. DONE (19:28) — everything shipped
+
+Phase 2 complete (16,680/16,680, zero errors after the §9 incident recovery; launchd
+ownership made the runner immortal — one harmless relaunch loop after success, killed by
+`launchctl remove`). Cooker unblocked post-run. Merged 11-arm leaderboard + 3 merged
+charts + FINDINGS §14 + REPORT.md sweep section + WEEKLY §10 + PDF (840 KB) all
+regenerated from artefacts. **Bottom line: crown stands (clef-27b only arm winning
+quality AND budget); OpenJev-Flash-9B is the banked fast-tier upgrade (+0.030
+[+0.024, +0.036] certified, license-pending); OpenJev-27B is the calibration-fix target
+(0.889 AUROC locked behind a 0.073-FPR tail).**

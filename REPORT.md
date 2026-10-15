@@ -43,6 +43,45 @@ wall-clock of 27B), but at full scale it buys no AUROC over flash. **New at full
 judge alone now exceeds the risk budget on test (FPR 0.055 > 0.05) — its top coverage is
 officially unbuyable at 5% risk.**
 
+## System-one model sweep — full dataset (same n, same budget, same seed)
+
+Eight more open-source System-1 models discovered, downloaded, gate-tested (FINDINGS §13)
+and run full (`sweep-full-v1`, six arms × 2,780, zero errors). Merged 11-arm leaderboard:
+
+| # | arm | AUROC [95% CI] | Δ vs clef-27b [CI] | thr | test FPR | coverage | p50 ms |
+|---|---|---|---|---|---|---|---|
+| 1 | **openjev-27b-4bit** ⚠NC | **0.889** [0.880, 0.899] | **+0.018** [+0.014, +0.023] | 0.99 | **0.073 ✗** | 0.308 | 610 |
+| 2 | **clef-27b** | 0.871 [0.860, 0.881] | — | 0.93 | 0.049 ✓ | 0.238 | 534 |
+| 3 | **openjev-flash-9b** | 0.860 [0.849, 0.870] | −0.011 [−0.017, −0.005] | 0.99 | 0.042 ✓ | 0.175 | 470 |
+| 4 | clef-flash | 0.830 [0.819, 0.840] | −0.041 [−0.047, −0.034] | 0.89 | 0.039 ✓ | 0.162 | 165 |
+| 5 | qwen38-judge | 0.826 | −0.044 | 0.96 | 0.055 ✗ | 0.256 | 511 |
+| 6 | cascade | 0.823 | −0.048 | 0.89 | 0.047 ✓ | 0.187 | 174 |
+| 7 | tev1-4b (k=12 votes) | 0.805 [0.793, 0.816] | −0.066 [−0.075, −0.057] | 0.92 | 0.058 ✗ | 0.206 | 1,517 |
+| 8 | laya-typed-decisions | 0.689 [0.678, 0.700] | −0.182 | 0.83 | 0.024 ✓ | 0.056 | 62 |
+| 9 | lexical | 0.665 | −0.206 | 0.88 | 0.049 ✓ | 0.114 | ~0 |
+| 10 | von-1.3 (noul) | 0.649 [0.636, 0.661] | −0.222 | 0.84 | 0.000 ✓ | **0.000** | 127 |
+| 11 | laya | 0.622 [0.611, 0.633] | −0.249 | 0.86 | 0.040 ✓ | 0.060 | 43 |
+
+- **OpenJev-27B wins AUROC but cannot certify**: val FPR floors at 0.058 (threshold
+  fallback at 0.99), test 0.073 — over-confident tail, disqualified standalone exactly
+  where the judge was. Benchmark lesson: it punishes both spike-y *and* heavy-tailed
+  miscalibration; ranking power ≠ risk control.
+- **OpenJev-Flash-9B wins the fast tier outright**: certifies at FPR 0.042 and beats
+  clef-flash by a certified **+0.030 [+0.024, +0.036]**. Costs 2.8× the latency
+  (470 ms vs 165) and covers slightly more (0.175 vs 0.162).
+- **Revised production recommendation:** **clef-27B remains the gate** (the only arm
+  with both budget compliance and top-2 ranking). If the fast tier is revisited,
+  OpenJev-Flash-9B > clef-flash on accuracy at moderate latency cost — subject to a
+  license check; the 27B is CC-BY-NC and was run benchmark-only, never a production
+  candidate.
+- **Tev1-4B**: honest AR k-sampling arm (no server logprobs existed — score = 12-vote
+  rate, FINDINGS §13). 0.805 at 1.5 s/case, fails budget: behavioral System-1 works,
+  pays AR price for sub-Clef accuracy.
+- **Encoder family (laya/von/opendecider)**: all alive but tier-3 as gates.
+  laya-typed > lexical certified (+0.024) at 62 ms; von's budget-compliant operating
+  point admits nothing — an abstention machine.
+- clef-omni-4bit: server cannot load `qwen3_omni_moe` — excluded pre-flight, not scored.
+
 ## How each model did (full dataset)
 
 - **Clef-27B:** the winner on every axis that matters together — AUROC 0.871, ECE 0.093,
@@ -95,12 +134,20 @@ full-benchmark-v1` (plus `make_exec_figures.py`, `make_roc_explainer.py`) purely
 | `capacity_vs_latency.png` | 27B vs flash, 3q vs 1q (capacity run) |
 | `concurrency_ceiling.png` | QPS pinned c1→c8; tails inflate linearly |
 | `cost_per_condition.png` | cascade ≈ flash + escalation — half the wall-clock of 27B |
+| `merged_leaderboard.png` | all 11 arms, AUROC + bootstrap CIs + paired Δ vs incumbent |
+| `merged_risk_coverage.png` | every arm's ROC on one axis, dots = tuned thresholds vs 5% line |
+| `merged_accuracy_vs_latency.png` | the deploy picture: accuracy vs p50 latency, all models |
 
 ## Where the headroom is (next pass)
 
 1. Coverage is still the constraint — 27B blocks 57% of answerable traffic at 5% risk.
-   A purpose-trained sufficiency probe (ModernBERT / hidden-state) is the next lever.
-2. Thinking-on escalated cases (option b from §11) — the only lever left for the cascade.
-3. Contradiction tier needs labelled conflicts (stage 4); `t_conflict` still uncalibrated.
-4. Break the ~6 QPS ceiling: client batching, second replica, or upstream decision-engine
+   Purpose-trained sufficiency probes are the next lever — the sweep's answer so far is
+   that off-the-shelf encoders (laya/von) rank *below* lexical-plus-calibration; a probe
+   fine-tuned on sufficiency pairs is still unbuilt and remains the highest-value lever.
+2. OpenJev calibration: asymmetric calibration (the §11 recipe) applied to OpenJev-27B's
+   heavy upper tail could rescue a 0.889-AUROC gate into budget compliance — the single
+   highest-value fix on the board (+0.018 AUROC sits behind it).
+3. Thinking-on escalated cases (option b from §11) — the only lever left for the cascade.
+4. Contradiction tier needs labelled conflicts (stage 4); `t_conflict` still uncalibrated.
+5. Break the ~6 QPS ceiling: client batching, second replica, or upstream decision-engine
    batching.
