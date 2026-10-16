@@ -481,3 +481,41 @@ laya-typed − lexical = +0.0241 [+0.0118, +0.0365]. All significant.
    use a plist with KeepAlive=false on next sweep.
 
 Charts: `results/report-figures/merged_{leaderboard,risk_coverage,accuracy_vs_latency}.png`.
+
+## 15. Ensembles from banked scores — the first gate to dethrone the champion on quality, blocked by license (2026-10-15)
+
+Zero-GPU experiment: 84 combination scorers (all pairs of 6 continuous-score arms +
+hand-picked triples/quads × {rank_avg, prob_avg, prob_min, prob_max}) built purely from
+banked val/test predictions of full-benchmark-v1 + sweep-full-v1. Same protocol: threshold
+on val @ 5% budget, test once, bootstrap seed 13 / 2,000 reps grouped by question.
+Script: `scripts/ensemble_certify.py`; tables: `results/ensemble-v1/`.
+
+**Headline: `qwen38-judge + openjev-27b-4bit` under `prob_min` (thr 0.96) certifies —
+test FPR 0.048, coverage 0.248, AUROC 0.885, Δ vs clef-27b +0.014 [+0.009, +0.019].**
+First scorer to beat the incumbent decisively on quality *and* hold the budget. `prob_avg`
+of the same pair also certifies (0.882, +0.012 [+0.007, +0.016]).
+
+**Mechanism — mutual veto.** `min(p) ≥ 0.96` needs both votes at near-certainty: the
+judge's shouty 0.95 spikes auto-veto (min = 0.95 < 0.96) — the exact habit that
+disqualified it standalone becomes the brake on OpenJev's 0.95–1.0 red tail, and OpenJev
+vetoes the judge's wrong 1.0s. Two disqualified models, mutually calibrated, certify.
+
+**Selection protocol lesson (winner's-curse guard).** Naive val-budget-0.05 selection
+picks rank_avg combos (val coverage 0.29–0.31) that all leak at test (FPR 0.060–0.070) —
+val remains an easier sample; a selector parked at 0.047 on val has no margin. Selecting
+at val budget 0.04 picks the judge+openjev winner and it holds. Budget choice dominated
+rule choice: at val 0.03 the protocol turns over-conservative (picks judge+tev, coverage
+0.139 — certified but below champion).
+
+**Caveats:** (1) openjev-27b is CC-BY-NC — the ensemble inherits it: **benchmark-only**;
+production stays clef-27B. (2) Test margin is thin (0.048 vs the 0.05 line). (3) Coverage
+gain is +1.0 pt, not the 0.308 openjev promised standalone — leak-set Jaccard between
+clef and openjev leaks is 0.50 (they leak together half the time; 45 shared of 90 union).
+(4) 84 scorers share one val/test; per-row CIs aren't family-wise corrected — the
+val-budget selection is the guard we stand on.
+
+**Strategic read:** the tail is *fixable* — restraint can be bought with a second opinion
+even when the second opinion is "bad" on its own. This is the strongest evidence yet that
+lever #2 (asymmetric calibration of openjev's upper tail, staying single-model → licensable)
+should be built next, and it reframes the sufficiency probe's spec: the probe should
+output a *veto* axis, not just a sufficiency score.

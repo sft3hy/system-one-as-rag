@@ -151,15 +151,37 @@ Whole-field, at a glance:
 
 ![Risk-coverage — every arm vs the 5% budget](results/report-figures/merged_risk_coverage.png)
 
+## Ensembles from banked scores (2026-10-15, zero-GPU, `scripts/ensemble_certify.py`)
+
+84 combination scorers (all pairs of the 6 continuous arms + triples/quads × {rank_avg,
+prob_avg, prob_min, prob_max}) scored entirely from banked predictions; val-tuned @ 5%,
+test once, seed 13 / 2,000 reps. `results/ensemble-v1/` holds the full table.
+
+- **Certified dethroner (benchmark-only license):** `qwen38-judge + openjev-27b-4bit`,
+  `prob_min` thr 0.96 → **FPR 0.048, coverage 0.248, AUROC 0.885, Δ vs clef-27b
+  +0.014 [+0.009, +0.019]** — first scorer to beat the incumbent decisively *and* hold
+  budget. Mechanism: mutual veto — the judge's 0.95 spikes become the brake on OpenJev's
+  red tail; OpenJev vetoes the judge's wrong 1.0s. CC-BY-NC inherits → cannot ship.
+- **Licence-clean ensembles do not beat the champion:** every clef-member combo that
+  certifies (e.g. clef+flash prob_min, FPR 0.037) trades coverage (≤0.213) for margin.
+- **Selection protocol:** val-0.05 selection leaks at test (rank_avg family, FPR up to
+  0.070); val-0.04 selection picks the winner and holds. Budget choice > rule choice.
+- Leak overlap clef∩openjev = Jaccard 0.50 — ensembles trim tails, they don't erase them.
+
 ## Where the headroom is (next pass)
 
 1. Coverage is still the constraint — 27B blocks 57% of answerable traffic at 5% risk.
    Purpose-trained sufficiency probes are the next lever — the sweep's answer so far is
    that off-the-shelf encoders (laya/von) rank *below* lexical-plus-calibration; a probe
    fine-tuned on sufficiency pairs is still unbuilt and remains the highest-value lever.
+   HF sweep 2026-10-15 confirmed nothing off-the-shelf fits (hobbyist SQuAD-answerability
+   models only). Spec update from §15's ensemble result: the probe should carry a **veto
+   axis**, not just a sufficiency score — mutual veto is now proven to certify.
 2. OpenJev calibration: asymmetric calibration (the §11 recipe) applied to OpenJev-27B's
    heavy upper tail could rescue a 0.889-AUROC gate into budget compliance — the single
-   highest-value fix on the board (+0.018 AUROC sits behind it).
+   highest-value fix on the board (+0.018 AUROC sits behind it). **Ensemble §15 proves
+   the tail is fixable by veto; calibration is the single-model (licensable) version of
+   the same trick.**
 3. Thinking-on escalated cases (option b from §11) — the only lever left for the cascade.
 4. Contradiction tier needs labelled conflicts (stage 4); `t_conflict` still uncalibrated.
 5. Break the ~6 QPS ceiling: client batching, second replica, or upstream decision-engine

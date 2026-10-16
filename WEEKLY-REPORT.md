@@ -307,7 +307,8 @@ budget-compliant fast tier, **OpenJev-Flash-9B beats Clef-Flash by a statistical
 margin** (+0.03 AUROC) at a moderate latency cost — a swap worth pricing (§10).
 
 1. **Biggest opportunity:** every option today answers only ~1 in 5 questions it could safely
-   answer. Next we test a purpose-trained "sufficiency probe" that could lift that substantially
+   answer. This week we found the first crack in that wall — see §11. Next we test a
+   purpose-trained "sufficiency probe" that could lift that substantially
    — coverage, not safety, is where the business value is unlocked.
 2. Make the chat judge *earn* its escalations (a smarter "thinking mode" for hard cases only).
 3. Build a labelled contradiction test set — the gate's second job (catching documents that
@@ -356,13 +357,36 @@ The meta-lesson for the roadmap: **raw judgement quality is no longer scarce —
 self-restraint is.** Two of three high-accuracy rivals self-destructed on the calibration
 test that Clef passes. Our next big lever (§9's sufficiency probe) should be judged on both.
 
+## 11. A free lunch, technically: two disqualified models certify when they referee each other
+
+With every model's answers already banked, we spent one afternoon (no GPUs) testing
+*committees* of models instead of solo artists — 84 combinations, same exam, same 5%
+budget, same honest protocol.
+
+**The surprise:** the committee of **the chat judge + OpenJev-27B** — the two models we
+disqualified — **passes the safety exam (risk 4.8%) and beats the champion's judgement
+decisively** (quality +0.014, coverage 25% vs the champion's 24%). Why it works: a
+committee case is approved only if *both* members are near-certain — and the judge's habit
+of shouting "95%" (its fatal flaw) now acts as a **brake**: anything the judge marks 95%
+gets vetoed, which happens to be exactly where OpenJev's dangerous overconfidence hides.
+OpenJev returns the favour by vetoing the judge's own wrong "100%"s. Two flawed referees
+make one honest one.
+
+**Why we still don't switch:** OpenJev's license is research-only (CC-BY-NC), so this
+committee can't ship. But the finding is worth its weight: it **proves the overconfidence
+tail is fixable**, and points straight at the two production plays — calibrating OpenJev's
+tail directly (§10's next-step, now much better motivated) and building our own sufficiency
+probe with a built-in veto vote.
+
 ---
 
-*Appendix — full technical detail for anyone who wants it:* `FINDINGS.md` (14 sections of
-measurements and methodology; §13–§14 are this week's model search), `REPORT.md`
-(model-by-model summary incl. the merged 11-arm leaderboard), `PLAN-FULL-RUN.md` and
-`PLAN-SYSTEMONE-SWEEP.md` (how the runs were planned vs how they went), raw run data in
-`results/full-benchmark-v1/` (13,900 predictions) and `results/sweep-full-v1/` (16,680),
-the merged tables in `results/merged-leaderboard-v1/`, all charts reproducible via
+*Appendix — full technical detail for anyone who wants it:* `FINDINGS.md` (15 sections of
+measurements and methodology; §13–§14 are this week's model search, §15 the committee
+result), `REPORT.md` (model-by-model summary incl. the merged 11-arm leaderboard),
+`PLAN-FULL-RUN.md` and `PLAN-SYSTEMONE-SWEEP.md` (how the runs were planned vs how they
+went), raw run data in `results/full-benchmark-v1/` (13,900 predictions) and
+`results/sweep-full-v1/` (16,680), the merged tables in `results/merged-leaderboard-v1/`
+and `results/ensemble-v1/`, all charts reproducible via
 `scripts/make_report_figures.py`, `scripts/make_exec_figures.py`,
-`scripts/make_roc_explainer.py` and `scripts/make_merged_figures.py`.*
+`scripts/make_roc_explainer.py`, `scripts/make_merged_figures.py` and
+`scripts/ensemble_certify.py`.*
