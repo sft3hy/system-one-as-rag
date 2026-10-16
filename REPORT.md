@@ -168,20 +168,35 @@ test once, seed 13 / 2,000 reps. `results/ensemble-v1/` holds the full table.
   0.070); val-0.04 selection picks the winner and holds. Budget choice > rule choice.
 - Leak overlap clef∩openjev = Jaccard 0.50 — ensembles trim tails, they don't erase them.
 
+## Solo tail calibration fails — the fix must be cross-model (2026-10-15)
+
+`scripts/tail_calibrate.py` (`results/tail-calibration-v1/`): hubris-veto rule
+`raw ≥ t AND purity_bin(raw) ≥ c` (val-quantile purity bins, (t,c) val-tuned @ 5%,
+test once). Strictly more expressive than a threshold — can veto dishonest high bands.
+**Negative on all 10 arms:** champion clef-27b tunes to t=0.79 + 10 veto bands → val
+coverage 0.318 → test FPR **0.097**; openjev-27b moves 0.073→0.070 (nothing). The
+val-purity estimator (~14 cases/bin) is noise the greedy tuner happily overfits.
+Read together with §15's certified judge+OpenJev `prob_min`: **tail safety cannot be
+self-certified; it requires a second opinion.** Directly motivates the probe's veto
+head (`PLAN-PROBE.md`).
+
+**License rulings (HF 2026-10-15):** all official `openjev/*` repos incl.
+`OpenJev-Flash-9B-MLX` are **CC-BY-NC-4.0** → banked fast-tier swap is dead, Clef-Flash
+stays; Apache-tagged re-uploads of the family are license-washing risk (unusable);
+`togethercomputer/Tev1-4B-experimental` carries no license tag (benchmark-only by
+caution); `com-kotobalabs/open-jev-deberta-v3-large` is the genuinely Apache JEv-line
+alternative if one is ever needed.
+
 ## Where the headroom is (next pass)
 
-1. Coverage is still the constraint — 27B blocks 57% of answerable traffic at 5% risk.
-   Purpose-trained sufficiency probes are the next lever — the sweep's answer so far is
-   that off-the-shelf encoders (laya/von) rank *below* lexical-plus-calibration; a probe
-   fine-tuned on sufficiency pairs is still unbuilt and remains the highest-value lever.
-   HF sweep 2026-10-15 confirmed nothing off-the-shelf fits (hobbyist SQuAD-answerability
-   models only). Spec update from §15's ensemble result: the probe should carry a **veto
-   axis**, not just a sufficiency score — mutual veto is now proven to certify.
-2. OpenJev calibration: asymmetric calibration (the §11 recipe) applied to OpenJev-27B's
-   heavy upper tail could rescue a 0.889-AUROC gate into budget compliance — the single
-   highest-value fix on the board (+0.018 AUROC sits behind it). **Ensemble §15 proves
-   the tail is fixable by veto; calibration is the single-model (licensable) version of
-   the same trick.**
+1. **The sufficiency probe is now the only open coverage lever** (`PLAN-PROBE.md`):
+   cross-encoder + veto head trained on the union of teacher leaks, distilled from
+   clef-27B with agreement-filtered OpenJev labels. Every alternative is closed:
+   off-the-shelf sufficiency models don't exist (HF sweep 2026-10-15: hobbyist
+   SQuAD-answerability only); OpenJev-family buys are NC-licensed; solo calibration
+   is empirically dead (above).
+2. Ensembles (§15) are the proven architecture but license-blocked at the moment;
+   the probe is *a committee inside one model we own* — same mechanism, clean rights.
 3. Thinking-on escalated cases (option b from §11) — the only lever left for the cascade.
 4. Contradiction tier needs labelled conflicts (stage 4); `t_conflict` still uncalibrated.
 5. Break the ~6 QPS ceiling: client batching, second replica, or upstream decision-engine

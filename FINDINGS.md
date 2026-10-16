@@ -519,3 +519,38 @@ even when the second opinion is "bad" on its own. This is the strongest evidence
 lever #2 (asymmetric calibration of openjev's upper tail, staying single-model → licensable)
 should be built next, and it reframes the sufficiency probe's spec: the probe should
 output a *veto* axis, not just a sufficiency score.
+
+## 16. Solo self-calibration fails everywhere; OpenJev family is NC-licensed (2026-10-15)
+
+**Hubris-veto experiment** (`scripts/tail_calibrate.py`, `results/tail-calibration-v1/`):
+non-monotonic approval rule `raw ≥ t AND purity_bin(raw) ≥ c`, purity estimated on VAL
+quantile bins (40, min 10/bin), (t,c) tuned on val @ ≤5% FPR for max coverage, test once.
+This strictly generalizes thresholds (a threshold can only cut the bottom; this can veto
+high bands too — the single-model version of §15's mutual veto).
+
+**Result: clean negative — 9 of 10 arms fail test, champion included.**
+clef-27b tuned to t=0.79 with 10 veto bands → val coverage 0.318 → **test FPR 0.097**.
+openjev-27b barely moved (0.070 vs plain 0.073). The val-purity estimator is too noisy
+(~14 cases/bin) and val-vs-test band purity shifts; the greedy tuner exploits both and
+pays at test. Solo calibration cannot buy tail safety — val-refit is not a second opinion.
+Contrast §15: judge+OpenJev `prob_min` DID certify. **The fix lives in cross-model
+agreement, not self-reference.** This is the empirical founding fact of `PLAN-PROBE.md`:
+our probe must carry a *veto head trained on the union of teacher leaks*, not a refit
+of its own score distribution.
+
+**License rulings (HF API, 2026-10-15):**
+- `openjev/OpenJev-Flash-9B-MLX` (our banked fast-tier candidate): **CC-BY-NC-4.0** —
+  production fast-tier swap is DEAD; Clef-Flash stays shipped. All official openjev/*
+  repos (incl. FP8/MLX/GGUF by ggml-org) are CC-BY-NC-4.0.
+- Apache-tagged lookalikes (ZefanCai/Open-Jev-27B-v1.1, prithivMLmods APUS-*, misc
+  forks): unofficial re-uploads of an NC family — re-uploader license tags confer no
+  rights; do not consume until the original authors relicense upstream.
+- `togethercomputer/Tev1-4B-experimental`: official card ships **no license tag** —
+  treat as unverified for any purpose beyond benchmark.
+- Apache-clean encoder alternative if ever needed: `com-kotobalabs/open-jev-deberta-v3-large`
+  (Apache, 3.7k dl) — same *DeBERTa* line as the original JEv, genuinely permissive.
+
+**Net roadmap effect:** every buyable coverage lever is now closed by license or by the
+§16 negative. The sufficiency probe (`PLAN-PROBE.md`) is the only open path — and its
+spec is now fixed by evidence: cross-encoder + veto head, distilled from clef-27B with
+agreement-filtered OpenJev labels, certified under the unchanged protocol.

@@ -37,7 +37,7 @@ NICE = {
     "cascade":         "Two-step combo",
     "lexical":         "No-AI checklist",
     "openjev-27b-4bit":     "OpenJev-27B (rival, research-only)",
-    "openjev-flash-9b":     "OpenJev-Flash-9B ★ fast-tier upgrade",
+    "openjev-flash-9b":     "OpenJev-Flash-9B ★ (research license)",
     "tev1-4b":                "Tev (chat, 12-vote)",
     "laya-typed-decisions": "Laya-typed",
     "laya":                   "Laya",
@@ -98,7 +98,7 @@ for r in rows.values():
 LBL = {
     "openjev-27b-4bit":      dict(at=(1700, 0.893), text="OpenJev-27B ✗\n(research-only)", fs=11.5, fw="bold", ha="center"),
     "clef-27b":              dict(at=(42, 0.884),   text="👑 Clef-27B\nRECOMMENDED", fs=12.5, fw="bold", ha="right"),
-    "openjev-flash-9b":      dict(at=(1100, 0.856), text="★ OpenJev-Flash-9B\nfast-tier upgrade", fs=11.5, fw="bold", ha="left"),
+    "openjev-flash-9b":      dict(at=(1100, 0.856), text="★ OpenJev-Flash-9B\n(beats Clef-Flash; research license)", fs=11.5, fw="bold", ha="left"),
     "clef-flash":            dict(at=(40, 0.838),    text="Clef-Flash", fs=10.5, fw="normal", ha="left"),
     "cascade":               dict(at=(40, 0.812),     text="Two-step combo", fs=10.5, fw="normal", ha="left"),
     "qwen38-judge":          dict(at=(850, 0.800),    text="Chat judge ✗", fs=10.5, fw="normal", ha="left"),

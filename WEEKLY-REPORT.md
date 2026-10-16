@@ -84,8 +84,9 @@ smart enough to tell which questions are safe, so they approve almost nothing.
 - **Clef-27B (green, 24%) remains the widest bar that is honest.** This week's eight-model
   search did not dislodge it — it confirmed that combining top judgement with top restraint is
   rare.
-- **OpenJev-Flash-9B (green, 18%) is this week's genuine catch**: a budget-compliant fast
-  option that judges better than Clef-Flash (see §10).
+- **OpenJev-Flash-9B (green, 18%) is this week's genuine catch**: a budget-compliant
+  option that judges better than Clef-Flash — though its license (research-only, §10)
+  keeps it out of production for now (see §10).
 - **The bottleneck is still timidity, not danger**: even the honest champions auto-answer only
   16–24% of traffic, and roughly half of what they block was actually safe to answer.
   Coverage — not safety — is where the business value is locked up (§9).
@@ -108,7 +109,7 @@ they keep their 5% safety promise (green) or break it (red).
 - **OpenJev-27B (red, top-right) is the week's big story:** highest judgement quality we
   have ever measured (0.889) — but red, disqualified (§6, §10).
 - **OpenJev-Flash-9B (green star)** beats Clef-Flash on quality decisively at moderate speed —
-  the fast-tier upgrade to price next week.
+  a real talent, but research-licensed (§10), so shelved rather than priced.
 - **The intern tier (bottom-left) is cheap but blunt:** Laya/Von answer almost nothing
   safely; Tev pays chat-model speed (far right) for mid-table green-less accuracy.
 
@@ -304,7 +305,8 @@ that judged *better* than Clef-27B broke the same safety budget the chat judge d
 other rival was further back. Clef-27B remains the only contestant that wins quality and
 obedience together. One concrete upgrade did fall out of the search: if/when we run the
 budget-compliant fast tier, **OpenJev-Flash-9B beats Clef-Flash by a statistically decisive
-margin** (+0.03 AUROC) at a moderate latency cost — a swap worth pricing (§10).
+margin** (+0.03 AUROC) at a moderate latency cost — though the license check (§10) has since
+come back research-only, so today the production fast tier stays Clef-Flash.
 
 1. **Biggest opportunity:** every option today answers only ~1 in 5 questions it could safely
    answer. This week we found the first crack in that wall — see §11. Next we test a
@@ -340,11 +342,12 @@ sits to the right of that line.
   setting it waves through 7.3% unsafe answers — over our 5% budget, no exceptions. A gate
   that judges brilliantly but can't be trusted to say "no" is not a gate. **The crown
   stands.**
-- **A genuine upgrade for the budget tier: OpenJev-Flash-9B.** It *does* stay inside the
-  5% budget, and beats Clef-Flash decisively (0.860 vs 0.830). If we keep a fast tier,
-  this is the one to price — with a license check first (its bigger sibling carries a
-  non-commercial license; that one was tested strictly as research and never considered
-  for production).
+- **A genuine upgrade for the budget tier — but license-blocked: OpenJev-Flash-9B.** It
+  *does* stay inside the 5% budget, and beats Clef-Flash decisively (0.860 vs 0.830).
+  **License check now done (2026-10-15): CC-BY-NC-4.0 — research-only, cannot ship.**
+  The fast-tier swap is therefore off the table for production; Clef-Flash stays.
+  (Apache-licensed re-uploads of this family exist on Hugging Face, but re-uploader
+  license tags don't confer rights we can rely on — we won't build on those.)
 - **The cheap interns are real but junior.** The two Laya models and Von run in
   0.04–0.13 seconds — the cheapest AI options on the board — and Laya-typed measurably
   beats the no-AI checklist (a significant +0.02). But none comes close to a Clef. Von
@@ -374,9 +377,11 @@ make one honest one.
 
 **Why we still don't switch:** OpenJev's license is research-only (CC-BY-NC), so this
 committee can't ship. But the finding is worth its weight: it **proves the overconfidence
-tail is fixable**, and points straight at the two production plays — calibrating OpenJev's
-tail directly (§10's next-step, now much better motivated) and building our own sufficiency
-probe with a built-in veto vote.
+tail is fixable by a second opinion**. And when we tried to teach each model to police
+*itself* — the solo version of this trick — it failed for every model on the board,
+champion included (§16 of the technical log). That's the strongest argument yet for the
+plan now on the roadmap: **build our own gate that carries a referee's veto in its own
+head** (`PLAN-PROBE.md`) — a committee in one small model we own outright.
 
 ---
 
@@ -388,5 +393,5 @@ went), raw run data in `results/full-benchmark-v1/` (13,900 predictions) and
 `results/sweep-full-v1/` (16,680), the merged tables in `results/merged-leaderboard-v1/`
 and `results/ensemble-v1/`, all charts reproducible via
 `scripts/make_report_figures.py`, `scripts/make_exec_figures.py`,
-`scripts/make_roc_explainer.py`, `scripts/make_merged_figures.py` and
-`scripts/ensemble_certify.py`.*
+`scripts/make_roc_explainer.py`, `scripts/make_merged_figures.py`,
+`scripts/ensemble_certify.py` and `scripts/tail_calibrate.py`.*
